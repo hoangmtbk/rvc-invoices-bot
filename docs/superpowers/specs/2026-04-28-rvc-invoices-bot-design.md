@@ -214,7 +214,7 @@ SCRAPERS = {
 IMAP_SERVER=mail.rvctel.vn
 IMAP_PORT=993
 IMAP_USER=invoices_bot@rvctel.vn
-IMAP_PASSWORD=fe1923Kk7
+IMAP_PASSWORD=your_imap_password_here
 
 GEMINI_API_KEY=your_gemini_api_key_here
 
