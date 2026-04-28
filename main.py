@@ -9,7 +9,6 @@ import router
 from config import DAILY_REPORT_TIME, EMAIL_POLL_INTERVAL_MINUTES, LOG_DIR, LOG_FILE
 from logger import setup_logging
 
-setup_logging(LOG_FILE, LOG_DIR)
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +24,7 @@ def poll_emails() -> None:
 
 
 def main() -> None:
+    setup_logging(LOG_FILE, LOG_DIR)
     logger.info("rvc-invoices-bot starting up")
     logger.info(f"Poll interval: {EMAIL_POLL_INTERVAL_MINUTES} minutes")
     logger.info(f"Daily report time: {DAILY_REPORT_TIME}")
