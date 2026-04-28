@@ -5,7 +5,8 @@ import re
 import tempfile
 import xml.etree.ElementTree as ET
 
-import google.generativeai as genai
+import google.genai as genai
+from google.genai import types
 
 from config import GEMINI_API_KEY, RVC_TAX_CODE
 
@@ -106,16 +107,22 @@ def parse_xml(xml_bytes: bytes) -> dict:
 
 
 def parse_pdf_via_gemini(pdf_bytes: bytes) -> dict:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = tmp.name
 
     try:
-        uploaded = genai.upload_file(tmp_path, mime_type="application/pdf")
-        response = model.generate_content([GEMINI_PROMPT, uploaded])
+        with open(tmp_path, "rb") as f:
+            uploaded = client.files.upload(
+                file=f,
+                config=types.UploadFileConfig(mime_type="application/pdf")
+            )
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[GEMINI_PROMPT, uploaded]
+        )
         raw = response.text.strip()
         raw = re.sub(r"^```(?:json)?\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)

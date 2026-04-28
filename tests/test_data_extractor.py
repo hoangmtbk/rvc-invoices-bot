@@ -109,3 +109,109 @@ def test_determine_invoice_type_purchase():
     with patch("data_extractor.RVC_TAX_CODE", "0313028740"):
         assert _determine_invoice_type("9999999999") == "PURCHASE"
         assert _determine_invoice_type(None) == "PURCHASE"
+
+
+def test_parse_pdf_via_gemini_parses_json_response(tmp_path):
+    fake_pdf = tmp_path / "invoice.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake")
+
+    mock_response = MagicMock()
+    mock_response.text = (
+        '{"invoice_number": "001", "seller_tax_code": "0100109106",'
+        ' "total_after_tax": 5500000, "seller_name": "Cty ABC"}'
+    )
+    mock_client = MagicMock()
+    mock_client.files.upload.return_value = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("data_extractor.genai.Client", return_value=mock_client), \
+         patch("data_extractor.tempfile.NamedTemporaryFile") as mock_tmp, \
+         patch("data_extractor.os.unlink"):
+
+        mock_file = MagicMock()
+        mock_file.name = str(fake_pdf)
+        mock_tmp.return_value.__enter__ = MagicMock(return_value=mock_file)
+        mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+
+        from data_extractor import parse_pdf_via_gemini
+        result = parse_pdf_via_gemini(b"%PDF-1.4")
+
+    assert result["invoice_number"] == "001"
+    assert result["invoice_type"] == "PURCHASE"
+    assert result["total_after_tax"] == 5500000
+    assert result["seller_name"] == "Cty ABC"
+
+
+def test_parse_pdf_via_gemini_strips_markdown_fences(tmp_path):
+    fake_pdf = tmp_path / "invoice.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4")
+
+    mock_response = MagicMock()
+    mock_response.text = '```json\n{"invoice_number": "002", "seller_tax_code": null}\n```'
+    mock_client = MagicMock()
+    mock_client.files.upload.return_value = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("data_extractor.genai.Client", return_value=mock_client), \
+         patch("data_extractor.tempfile.NamedTemporaryFile") as mock_tmp, \
+         patch("data_extractor.os.unlink"):
+
+        mock_file = MagicMock()
+        mock_file.name = str(fake_pdf)
+        mock_tmp.return_value.__enter__ = MagicMock(return_value=mock_file)
+        mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+
+        from data_extractor import parse_pdf_via_gemini
+        result = parse_pdf_via_gemini(b"%PDF-1.4")
+
+    assert result["invoice_number"] == "002"
+
+
+def test_parse_pdf_via_gemini_raises_on_invalid_json(tmp_path):
+    fake_pdf = tmp_path / "invoice.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4")
+
+    mock_response = MagicMock()
+    mock_response.text = "Không thể trích xuất dữ liệu từ file này."
+    mock_client = MagicMock()
+    mock_client.files.upload.return_value = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("data_extractor.genai.Client", return_value=mock_client), \
+         patch("data_extractor.tempfile.NamedTemporaryFile") as mock_tmp, \
+         patch("data_extractor.os.unlink"):
+
+        mock_file = MagicMock()
+        mock_file.name = str(fake_pdf)
+        mock_tmp.return_value.__enter__ = MagicMock(return_value=mock_file)
+        mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+
+        from data_extractor import parse_pdf_via_gemini
+        with pytest.raises(ValueError, match="invalid JSON"):
+            parse_pdf_via_gemini(b"%PDF-1.4")
+
+
+def test_parse_pdf_via_gemini_sets_sale_type(tmp_path):
+    fake_pdf = tmp_path / "invoice.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4")
+
+    mock_response = MagicMock()
+    mock_response.text = '{"invoice_number": "003", "seller_tax_code": "0313028740"}'
+    mock_client = MagicMock()
+    mock_client.files.upload.return_value = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("data_extractor.genai.Client", return_value=mock_client), \
+         patch("data_extractor.tempfile.NamedTemporaryFile") as mock_tmp, \
+         patch("data_extractor.os.unlink"), \
+         patch("data_extractor.RVC_TAX_CODE", "0313028740"):
+
+        mock_file = MagicMock()
+        mock_file.name = str(fake_pdf)
+        mock_tmp.return_value.__enter__ = MagicMock(return_value=mock_file)
+        mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+
+        from data_extractor import parse_pdf_via_gemini
+        result = parse_pdf_via_gemini(b"%PDF-1.4")
+
+    assert result["invoice_type"] == "SALE"

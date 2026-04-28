@@ -1,5 +1,5 @@
 imap-tools>=1.6.0
-google-generativeai>=0.8.3
+google-genai>=0.8.0
 playwright>=1.44.0
 schedule>=1.2.2
 requests>=2.31.0
