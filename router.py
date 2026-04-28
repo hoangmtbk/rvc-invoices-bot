@@ -43,7 +43,7 @@ def process_email(email) -> None:
             uid_temp = os.path.join(TEMP_DIR, str(email.uid))
             os.makedirs(uid_temp, exist_ok=True)
             try:
-                zip_path = os.path.join(uid_temp, "invoice.zip")
+                zip_path = os.path.join(uid_temp, zip_att.filename or "attachment.zip")
                 with open(zip_path, "wb") as f:
                     f.write(zip_att.payload)
                 with zipfile.ZipFile(zip_path, "r") as zf:
