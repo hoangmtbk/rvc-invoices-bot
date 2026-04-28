@@ -20,20 +20,17 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, KHÔNG có văn bản hay mark
   "invoice_symbol": "ký hiệu hóa đơn hoặc null",
   "invoice_number": "số hóa đơn hoặc null",
   "issue_date": "ngày lập YYYY-MM-DD hoặc null",
-  "lookup_code": "mã tra cứu hoặc null",
-  "lookup_website": "website tra cứu hoặc null",
   "seller_name": "tên người bán hoặc null",
   "seller_tax_code": "mã số thuế người bán hoặc null",
-  "seller_address": "địa chỉ người bán hoặc null",
   "buyer_name": "tên người mua hoặc null",
   "buyer_tax_code": "mã số thuế người mua hoặc null",
-  "buyer_address": "địa chỉ người mua hoặc null",
-  "payment_method": "hình thức thanh toán hoặc null",
-  "bank_account": "số tài khoản ngân hàng hoặc null",
+  "description": "mô tả hàng hóa/dịch vụ hoặc null",
   "total_before_tax": số_thực_hoặc_null,
   "vat_rate": "thuế suất ví dụ '10%' hoặc null",
   "total_vat_amount": số_thực_hoặc_null,
-  "total_after_tax": số_thực_hoặc_null
+  "total_after_tax": số_thực_hoặc_null,
+  "lookup_code": "mã tra cứu hoặc null",
+  "lookup_website": "website tra cứu hoặc null"
 }"""
 
 
@@ -87,22 +84,19 @@ def parse_xml(xml_bytes: bytes) -> dict:
         "invoice_symbol": (symbol_part1 + symbol_part2).strip() or None,
         "invoice_number": _find_text(root, "SHDon", "SoHoaDon"),
         "issue_date": _find_text(root, "NLap", "NgayLap"),
-        "lookup_code": _find_text(
-            root, "MaQRCode", "MTra", "MCCQT", "MaTraCuu", "MaKiemTra"
-        ),
-        "lookup_website": None,
         "seller_name": _find_text(nban, "Ten"),
         "seller_tax_code": seller_tax_code,
-        "seller_address": _find_text(nban, "DChi", "DiaChiNBan"),
         "buyer_name": _find_text(nmua, "Ten"),
         "buyer_tax_code": _find_text(nmua, "MST", "MaSoThue"),
-        "buyer_address": _find_text(nmua, "DChi"),
-        "payment_method": _find_text(root, "HTToan", "HinhThucThanhToan"),
-        "bank_account": _find_text(nban, "STKNHang", "SoTK", "TaiKhoanNH"),
+        "description": _find_text(root, "THHDVu", "TenHangHoaDichVu"),
         "total_before_tax": _to_float(_find_text(root, "TgTCThue", "TongTienChuaThue")),
         "vat_rate": _find_text(hhdvu, "TSuat", "ThueSuat") if hhdvu is not None else None,
         "total_vat_amount": _to_float(_find_text(root, "TgTThue", "TongTienThue")),
         "total_after_tax": _to_float(_find_text(root, "TgTTTBSo", "TongTienThanhToan")),
+        "lookup_code": _find_text(
+            root, "MaQRCode", "MTra", "MCCQT", "MaTraCuu", "MaKiemTra"
+        ),
+        "lookup_website": None,
     }
 
 
