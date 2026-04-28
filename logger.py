@@ -21,5 +21,6 @@ def setup_logging(log_file: str, log_dir: str) -> None:
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
+    root.handlers.clear()
     root.addHandler(file_handler)
     root.addHandler(console_handler)
