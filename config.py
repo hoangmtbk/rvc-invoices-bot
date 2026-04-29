@@ -23,6 +23,14 @@ DATA_DIR: str = os.path.join(BASE_DIR, "data")
 TEMP_DIR: str = os.path.join(BASE_DIR, "temp")
 LOG_DIR: str = os.path.join(BASE_DIR, "logs")
 
-INVOICE_CSV: str = os.path.join(DATA_DIR, "Tong_hop_hoa_don.csv")
-ERROR_CSV: str = os.path.join(DATA_DIR, "errors.csv")
+DB_PATH: str = os.path.join(DATA_DIR, "invoices.db")
 LOG_FILE: str = os.path.join(LOG_DIR, "bot.log")
+
+MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "rvc-minio:9000")
+MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
+MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
+MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "rvc-invoices")
+MINIO_PUBLIC_URL: str = os.getenv("MINIO_PUBLIC_URL", "")
+
+WEB_PORT: int = int(os.getenv("WEB_PORT", "8080"))
+WEB_SECRET: str = os.getenv("WEB_SECRET", "")
