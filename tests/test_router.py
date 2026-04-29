@@ -89,7 +89,7 @@ def test_branch_web_xml_path():
         text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu"
     )
 
-    with patch("router.web_scraper.download_invoice_file", return_value=(b"<HDon/>", "xml")) as mock_web, \
+    with patch("web_scraper.download_invoice_file", return_value=(b"<HDon/>", "xml")) as mock_web, \
          patch("router.data_extractor.parse_xml", return_value={"invoice_number": "004"}) as mock_parse, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
@@ -109,7 +109,7 @@ def test_branch_web_pdf_path():
         text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu"
     )
 
-    with patch("router.web_scraper.download_invoice_file", return_value=(b"%PDF", "pdf")), \
+    with patch("web_scraper.download_invoice_file", return_value=(b"%PDF", "pdf")), \
          patch("router.data_extractor.parse_pdf_via_gemini", return_value={"invoice_number": "005"}) as mock_gemini, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
