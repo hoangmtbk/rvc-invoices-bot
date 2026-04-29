@@ -176,3 +176,75 @@ def test_tier1_returns_none_when_no_hidden_inputs():
     html = "<html><body><p>No invoice data here.</p></body></html>"
     result = extract_xml_from_html_attachment(html)
     assert result is None
+
+
+# ── Tier 2 ──────────────────────────────────────────────────────────────────
+
+def test_tier2_finds_tai_xml_anchor_returns_xml():
+    from web_extraction_router import extract_direct_link
+    mock_resp = MagicMock()
+    mock_resp.headers = {"Content-Type": "application/xml"}
+    mock_resp.content = b"<?xml version='1.0'?><HDon/>"
+    mock_resp.raise_for_status = MagicMock()
+
+    html = '<a href="https://example.com/getXml?id=1">Tải XML</a>'
+    with patch("web_extraction_router.requests.get", return_value=mock_resp):
+        result = extract_direct_link(html)
+    assert result is not None
+    content, ctype = result
+    assert ctype == "xml"
+    assert content.startswith(b"<?xml")
+
+
+def test_tier2_finds_anchor_by_href_keyword():
+    from web_extraction_router import extract_direct_link
+    mock_resp = MagicMock()
+    mock_resp.headers = {"Content-Type": "application/xml"}
+    mock_resp.content = b"<?xml version='1.0'?><HDon/>"
+    mock_resp.raise_for_status = MagicMock()
+
+    html = '<a href="https://example.com/exportXml?token=ABC">Xem hóa đơn</a>'
+    with patch("web_extraction_router.requests.get", return_value=mock_resp):
+        result = extract_direct_link(html)
+    assert result is not None
+    _, ctype = result
+    assert ctype == "xml"
+
+
+def test_tier2_finds_tai_pdf_anchor_returns_pdf():
+    from web_extraction_router import extract_direct_link
+    mock_resp = MagicMock()
+    mock_resp.headers = {"Content-Type": "application/pdf"}
+    mock_resp.content = b"%PDF-1.4 fake"
+    mock_resp.raise_for_status = MagicMock()
+
+    html = '<a href="https://example.com/invoice.pdf">Tải PDF</a>'
+    with patch("web_extraction_router.requests.get", return_value=mock_resp):
+        result = extract_direct_link(html)
+    assert result is not None
+    _, ctype = result
+    assert ctype == "pdf"
+
+
+def test_tier2_token_url_in_text_body_caught_by_substrategy1():
+    from web_extraction_router import extract_direct_link
+    mock_resp = MagicMock()
+    mock_resp.headers = {"Content-Type": "application/xml"}
+    mock_resp.content = b"<?xml version='1.0'?><HDon/>"
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("web_extraction_router.requests.get", return_value=mock_resp):
+        result = extract_direct_link(
+            email_body_html="",
+            email_body_text="https://example.com/download?token=XYZ123",
+        )
+    assert result is not None
+    _, ctype = result
+    assert ctype == "xml"
+
+
+def test_tier2_returns_none_when_no_matching_links():
+    from web_extraction_router import extract_direct_link
+    html = '<a href="https://example.com/about">About us</a>'
+    result = extract_direct_link(html)
+    assert result is None

@@ -26,6 +26,14 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 _BASE64_RE = re.compile(r"^[A-Za-z0-9+/]{60,}={0,2}$")
+_VN_DOWNLOAD_TEXT_RE = re.compile(
+    r"(Tải XML|Download XML|Xuất XML|Tải PDF|Download PDF)",
+    re.IGNORECASE,
+)
+_HREF_DOWNLOAD_RE = re.compile(
+    r"(getXml|exportXml|downloadXml|download)",
+    re.IGNORECASE,
+)
 
 
 def extract_xml_from_html_attachment(html_content: str) -> bytes | None:
@@ -59,6 +67,44 @@ def extract_xml_from_html_attachment(html_content: str) -> bytes | None:
                         pass
     except Exception as e:
         logger.debug(f"extract_xml_from_html_attachment error: {e}")
+
+    return None
+
+
+def extract_direct_link(
+    email_body_html: str,
+    email_body_text: str = "",
+) -> tuple[bytes, str] | None:
+    # Sub-strategy 1: token/direct links — scan URLs from both bodies
+    combined = email_body_text + " " + email_body_html
+    result = _try_direct_download(_extract_urls(combined))
+    if result is not None:
+        return result
+
+    # Sub-strategy 2: Vietnamese-labeled <a> tags — HTML only
+    if not email_body_html:
+        return None
+    try:
+        soup = BeautifulSoup(email_body_html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "")
+            text = a.get_text(strip=True)
+            if not (_VN_DOWNLOAD_TEXT_RE.search(text) or _HREF_DOWNLOAD_RE.search(href)):
+                continue
+            try:
+                resp = requests.get(href, headers={"User-Agent": USER_AGENT}, timeout=30)
+                resp.raise_for_status()
+                ct = resp.headers.get("Content-Type", "")
+                if "xml" in ct or resp.content.strip().startswith(b"<?xml"):
+                    logger.info(f"Vietnamese link XML download: {href}")
+                    return resp.content, "xml"
+                if "pdf" in ct or resp.content[:4] == b"%PDF":
+                    logger.info(f"Vietnamese link PDF download: {href}")
+                    return resp.content, "pdf"
+            except Exception as e:
+                logger.debug(f"Vietnamese link download failed {href}: {e}")
+    except Exception as e:
+        logger.debug(f"extract_direct_link BeautifulSoup error: {e}")
 
     return None
 
