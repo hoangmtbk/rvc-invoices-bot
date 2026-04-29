@@ -48,6 +48,11 @@ def _ensure_tables() -> None:
 def append_invoice(data: dict) -> None:
     _ensure_tables()
     row = {col: str(data.get(col, "") or "") for col in INVOICE_COLUMNS}
+    if not row["invoice_number"] or not row["seller_tax_code"]:
+        logger.warning(
+            f"Invoice missing PK fields: invoice_number={row['invoice_number']!r} "
+            f"seller_tax_code={row['seller_tax_code']!r} — may collide with other unparseable invoices"
+        )
     placeholders = ", ".join("?" * len(INVOICE_COLUMNS))
     cols = ", ".join(f'"{c}"' for c in INVOICE_COLUMNS)
     inserted = False

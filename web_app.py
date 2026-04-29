@@ -107,7 +107,7 @@ def export():
 
     lines = [",".join(cols)]
     for row in rows:
-        lines.append(",".join(f'"{str(v or "")}"' for v in row))
+        lines.append(",".join(f'"{str(v or "").replace(chr(34), chr(34)*2)}"' for v in row))
 
     date_str = datetime.now().strftime("%Y%m%d")
     return Response(
