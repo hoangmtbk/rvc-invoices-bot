@@ -50,18 +50,21 @@ def append_invoice(data: dict) -> None:
     row = {col: str(data.get(col, "") or "") for col in INVOICE_COLUMNS}
     placeholders = ", ".join("?" * len(INVOICE_COLUMNS))
     cols = ", ".join(f'"{c}"' for c in INVOICE_COLUMNS)
+    inserted = False
     with _get_conn() as conn:
         cursor = conn.execute(
             f"INSERT OR IGNORE INTO invoices ({cols}) VALUES ({placeholders})",
             [row[c] for c in INVOICE_COLUMNS],
         )
-    if cursor.rowcount == 0:
-        logger.warning(
-            f"Duplicate invoice skipped: {data.get('invoice_number')} | "
-            f"seller_tax={data.get('seller_tax_code')}"
-        )
-        return
-    logger.info(f"Invoice saved: {data.get('invoice_number')} | {data.get('invoice_type')}")
+        if cursor.rowcount == 0:
+            logger.warning(
+                f"Duplicate invoice skipped: {data.get('invoice_number')} | "
+                f"seller_tax={data.get('seller_tax_code')}"
+            )
+        else:
+            inserted = True
+    if inserted:
+        logger.info(f"Invoice saved: {data.get('invoice_number')} | {data.get('invoice_type')}")
 
 
 def append_error(data: dict) -> None:
