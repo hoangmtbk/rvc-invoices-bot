@@ -8,7 +8,7 @@ import data_extractor
 import email_handler
 import reporter
 import storage
-import web_scraper
+import web_extraction_router
 from config import TEMP_DIR
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ def process_email(email) -> None:
         xml_att = _find_attachment(email, ".xml")
         zip_att = _find_attachment(email, ".zip")
         pdf_att = _find_attachment(email, ".pdf")
+        html_att = _find_attachment(email, ".html")
 
         if xml_att:
             branch = "XML"
@@ -69,12 +70,22 @@ def process_email(email) -> None:
             logger.info(f"Branch PDF | uid={email.uid} | subject='{subject}'")
             data = data_extractor.parse_pdf_via_gemini(pdf_att.payload)
 
+        elif html_att:
+            branch = "HTML"
+            logger.info(f"Branch HTML | uid={email.uid} | subject='{subject}'")
+            html_content = html_att.payload.decode("utf-8", errors="replace")
+            xml_bytes = web_extraction_router.extract_xml_from_html_attachment(html_content)
+            if xml_bytes is None:
+                raise ValueError("No Base64 XML found in HTML attachment")
+            data = data_extractor.parse_xml(xml_bytes)
+
         else:
             branch = "WEB"
             logger.info(f"Branch WEB | uid={email.uid} | subject='{subject}'")
-            file_bytes, content_type = web_scraper.download_invoice_file(
-                email.text or "", email.html or ""
-            )
+            result = web_extraction_router.process_branch_4(email)
+            if result is None:
+                raise ValueError("All extraction tiers failed — no XML or PDF retrieved")
+            file_bytes, content_type = result
             if content_type == "xml":
                 data = data_extractor.parse_xml(file_bytes)
             else:
