@@ -290,3 +290,53 @@ def test_tier3_unknown_domain_logs_warning_returns_none(caplog):
     assert result is None
     assert "Unsupported provider domain" in caplog.text
     assert "unknown-portal.vn" in caplog.text
+
+
+# ── process_branch_4 ─────────────────────────────────────────────────────────
+
+def test_process_branch4_tier2_success_skips_tier3():
+    from web_extraction_router import process_branch_4
+    email = MagicMock()
+    email.html = '<a href="https://example.com/getXml?id=1">Tải XML</a>'
+    email.text = ""
+
+    xml_resp = MagicMock()
+    xml_resp.headers = {"Content-Type": "application/xml"}
+    xml_resp.content = b"<?xml version='1.0'?><HDon/>"
+    xml_resp.raise_for_status = MagicMock()
+
+    with patch("web_extraction_router.requests.get", return_value=xml_resp), \
+         patch("web_extraction_router.dynamic_web_router") as mock_t3:
+        result = process_branch_4(email)
+
+    assert result is not None
+    assert result[1] == "xml"
+    mock_t3.assert_not_called()
+
+
+def test_process_branch4_tier2_fails_tier3_succeeds():
+    from web_extraction_router import process_branch_4
+    email = MagicMock()
+    email.html = ""
+    email.text = "mã tra cứu: MKKUXJMAG\nhttps://www.meinvoice.vn/tra-cuu"
+
+    with patch("web_extraction_router.extract_direct_link", return_value=None), \
+         patch("web_extraction_router.dynamic_web_router",
+               return_value=(b"<?xml?><HDon/>", "xml")) as mock_t3:
+        result = process_branch_4(email)
+
+    assert result == (b"<?xml?><HDon/>", "xml")
+    mock_t3.assert_called_once()
+
+
+def test_process_branch4_both_tiers_fail_returns_none():
+    from web_extraction_router import process_branch_4
+    email = MagicMock()
+    email.html = ""
+    email.text = "Nothing useful here."
+
+    with patch("web_extraction_router.extract_direct_link", return_value=None), \
+         patch("web_extraction_router.dynamic_web_router", return_value=None):
+        result = process_branch_4(email)
+
+    assert result is None

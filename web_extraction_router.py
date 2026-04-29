@@ -321,45 +321,42 @@ def dynamic_web_router(
     return None
 
 
-def download_invoice_file(body_text: str, body_html: str) -> tuple[bytes, str]:
-    combined = (body_text or "") + " " + (body_html or "")
-    all_urls = _extract_urls(combined)
+class _EmailBodyProxy:
+    __slots__ = ("text", "html")
 
-    # Stage 1: Try direct token/download link
-    result = _try_direct_download(all_urls)
-    if result is not None:
+    def __init__(self, text: str, html: str) -> None:
+        self.text = text
+        self.html = html
+
+
+def process_branch_4(email_obj) -> tuple[bytes, str] | None:
+    email_body_html = email_obj.html or ""
+    email_body_text = email_obj.text or ""
+    combined = email_body_text + " " + email_body_html
+
+    logger.debug(f"process_branch_4 email body text:\n{email_body_text}")
+    logger.debug(f"process_branch_4 email body html:\n{email_body_html}")
+
+    # Tier 2: direct links (token URLs + Vietnamese-labeled anchors)
+    result = extract_direct_link(email_body_html, email_body_text)
+    if result:
         return result
 
-    # Stage 2: Playwright lookup form
+    # Tier 3: domain-based Playwright router
     code = _extract_lookup_code(combined)
-    portal_url = None
-    for url in all_urls:
-        domain = urlparse(url).netloc
-        if domain in SCRAPERS:
-            portal_url = url
-            break
+    urls = _extract_urls(combined)
+    lookup_url = urls[0] if urls else None
+    if code and lookup_url:
+        result = dynamic_web_router(lookup_url, code, combined)
+        if result:
+            return result
 
-    if not code:
-        raise ValueError("No lookup code found in email body")
+    return None
 
-    if not portal_url:
-        found_domains = {urlparse(u).netloc for u in all_urls if urlparse(u).netloc}
-        unsupported = found_domains - set(SCRAPERS.keys())
-        if unsupported:
-            raise ValueError(f"Unsupported provider domain(s): {', '.join(unsupported)}")
-        raise ValueError("No known portal URL found in email body")
 
-    domain = urlparse(portal_url).netloc
-    scraper_fn = SCRAPERS.get(domain, scrape_generic)
-
-    for attempt in range(2):
-        try:
-            xml_bytes = scraper_fn(portal_url, code)
-            logger.info(f"Playwright download success: domain={domain} code={code}")
-            return xml_bytes, "xml"
-        except Exception as e:
-            if attempt == 0:
-                logger.warning(f"Playwright attempt 1 failed ({domain}): {e}, retrying in 3s")
-                time.sleep(3)
-            else:
-                raise
+def download_invoice_file(body_text: str, body_html: str) -> tuple[bytes, str]:
+    """Compatibility shim — wraps process_branch_4 for callers using the old signature."""
+    result = process_branch_4(_EmailBodyProxy(body_text, body_html))
+    if result is None:
+        raise ValueError("All extraction tiers failed — no XML or PDF retrieved")
+    return result
