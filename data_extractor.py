@@ -118,7 +118,7 @@ def parse_pdf_via_gemini(pdf_bytes: bytes) -> dict:
                 config=types.UploadFileConfig(mime_type="application/pdf")
             )
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash-preview-04-17",
             contents=[GEMINI_PROMPT, uploaded]
         )
         raw = response.text.strip()
