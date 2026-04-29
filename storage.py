@@ -1,18 +1,20 @@
-import csv
 import logging
-import os
+import sqlite3
 
-from config import ERROR_CSV, INVOICE_CSV
+from config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
 INVOICE_COLUMNS = [
     "invoice_type", "invoice_symbol", "invoice_number",
-    "issue_date", "seller_name",
-    "seller_tax_code", "buyer_name", "buyer_tax_code",
+    "issue_date", "seller_name", "seller_tax_code",
+    "buyer_name", "buyer_tax_code",
+    "contract_number", "customer_code",
     "description", "total_before_tax",
-    "vat_rate", "total_vat_amount", "total_after_tax","lookup_code", "lookup_website", 
-    "source_branch", "source_email_subject", "processed_date", 
+    "vat_rate", "total_vat_amount", "total_after_tax",
+    "lookup_code", "lookup_website",
+    "pdf_file_link", "xml_file_link",
+    "source_branch", "source_email_subject", "processed_date",
 ]
 
 ERROR_COLUMNS = [
@@ -21,49 +23,81 @@ ERROR_COLUMNS = [
 ]
 
 
-def _ensure_csv(filepath: str, columns: list) -> None:
-    if not os.path.exists(filepath):
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
+def _get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def _is_duplicate_invoice(invoice_number: str, seller_tax_code: str) -> bool:
-    """Return True if an invoice with the same number and seller already exists."""
-    if not os.path.exists(INVOICE_CSV):
-        return False
-    with open(INVOICE_CSV, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if (
-                row.get("invoice_number") == invoice_number
-                and row.get("seller_tax_code") == seller_tax_code
-            ):
-                return True
-    return False
+def _ensure_tables() -> None:
+    col_defs = ", ".join(f'"{c}" TEXT' for c in INVOICE_COLUMNS)
+    err_defs = ", ".join(f'"{c}" TEXT' for c in ERROR_COLUMNS)
+    with _get_conn() as conn:
+        conn.execute(
+            f"""CREATE TABLE IF NOT EXISTS invoices (
+                {col_defs},
+                PRIMARY KEY (invoice_number, seller_tax_code)
+            )"""
+        )
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS errors ({err_defs})"
+        )
 
 
 def append_invoice(data: dict) -> None:
-    _ensure_csv(INVOICE_CSV, INVOICE_COLUMNS)
-    invoice_number = str(data.get("invoice_number", ""))
-    seller_tax_code = str(data.get("seller_tax_code", ""))
-    if _is_duplicate_invoice(invoice_number, seller_tax_code):
+    _ensure_tables()
+    row = {col: str(data.get(col, "") or "") for col in INVOICE_COLUMNS}
+    placeholders = ", ".join("?" * len(INVOICE_COLUMNS))
+    cols = ", ".join(f'"{c}"' for c in INVOICE_COLUMNS)
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            f"INSERT OR IGNORE INTO invoices ({cols}) VALUES ({placeholders})",
+            [row[c] for c in INVOICE_COLUMNS],
+        )
+    if cursor.rowcount == 0:
         logger.warning(
-            f"Duplicate invoice skipped: {invoice_number} | seller_tax={seller_tax_code}"
+            f"Duplicate invoice skipped: {data.get('invoice_number')} | "
+            f"seller_tax={data.get('seller_tax_code')}"
         )
         return
-    row = {col: data.get(col, "") for col in INVOICE_COLUMNS}
-    with open(INVOICE_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=INVOICE_COLUMNS)
-        writer.writerow(row)
     logger.info(f"Invoice saved: {data.get('invoice_number')} | {data.get('invoice_type')}")
 
 
 def append_error(data: dict) -> None:
-    _ensure_csv(ERROR_CSV, ERROR_COLUMNS)
-    row = {col: data.get(col, "") for col in ERROR_COLUMNS}
-    with open(ERROR_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=ERROR_COLUMNS)
-        writer.writerow(row)
+    _ensure_tables()
+    row = {col: str(data.get(col, "") or "") for col in ERROR_COLUMNS}
+    placeholders = ", ".join("?" * len(ERROR_COLUMNS))
+    cols = ", ".join(f'"{c}"' for c in ERROR_COLUMNS)
+    with _get_conn() as conn:
+        conn.execute(
+            f"INSERT INTO errors ({cols}) VALUES ({placeholders})",
+            [row[c] for c in ERROR_COLUMNS],
+        )
     logger.info(f"Error logged: {data.get('email_subject')}")
+
+
+def update_file_link(
+    invoice_number: str,
+    seller_tax_code: str,
+    pdf_link: str | None = None,
+    xml_link: str | None = None,
+) -> None:
+    _ensure_tables()
+    updates = []
+    values = []
+    if pdf_link is not None:
+        updates.append('"pdf_file_link" = ?')
+        values.append(pdf_link)
+    if xml_link is not None:
+        updates.append('"xml_file_link" = ?')
+        values.append(xml_link)
+    if not updates:
+        return
+    values.extend([invoice_number, seller_tax_code])
+    with _get_conn() as conn:
+        conn.execute(
+            f"UPDATE invoices SET {', '.join(updates)} "
+            "WHERE invoice_number = ? AND seller_tax_code = ?",
+            values,
+        )
