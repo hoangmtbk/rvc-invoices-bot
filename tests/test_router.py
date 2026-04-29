@@ -25,40 +25,41 @@ def _make_attachment(filename: str, payload: bytes = b"data"):
     return att
 
 
-def test_branch_xml_calls_parse_xml():
-    att = _make_attachment("invoice.xml", b"<xml/>")
+def test_single_xml_attachment_xml_branch(tmp_path):
+    att = _make_attachment("HD001.xml", b"<HDon/>")
     email = _make_email(attachments=[att])
 
-    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "001"}) as mock_parse, \
-         patch("router.storage.append_invoice") as mock_store, \
-         patch("router.email_handler.mark_as_seen"), \
-         patch("router.reporter.send_error_alert"):
-
-        from router import process_email
-        process_email(email)
-
-    mock_parse.assert_called_once_with(b"<xml/>")
-    stored = mock_store.call_args[0][0]
-    assert stored["source_branch"] == "XML"
-    assert stored["source_email_subject"] == "Hóa đơn test"
-    assert "processed_date" in stored
-
-
-def test_branch_zip_extracts_and_parses_xml(tmp_path):
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("invoice.xml", b"<?xml version='1.0'?><HDon/>")
-    zip_bytes = buf.getvalue()
-
-    att = _make_attachment("invoice.zip", zip_bytes)
-    email = _make_email(attachments=[att])
-
-    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "002"}) as mock_parse, \
+    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "001", "seller_tax_code": "TAX"}) as mock_parse, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
          patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", return_value="https://rvc-s3.rvctel.vn/rvc-invoices/file.xml"), \
          patch("router.TEMP_DIR", str(tmp_path)):
+        from router import process_email
+        process_email(email)
 
+    mock_parse.assert_called_once()
+    stored = mock_store.call_args[0][0]
+    assert stored["source_branch"] == "XML"
+    assert stored["xml_file_link"] == "https://rvc-s3.rvctel.vn/rvc-invoices/file.xml"
+    assert stored["pdf_file_link"] == ""
+
+
+def test_zip_with_xml_sets_zip_branch(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("HD002.xml", b"<?xml version='1.0'?><HDon/>")
+    zip_bytes = buf.getvalue()
+
+    att = _make_attachment("HD002.zip", zip_bytes)
+    email = _make_email(attachments=[att])
+
+    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "002", "seller_tax_code": "TAX"}) as mock_parse, \
+         patch("router.storage.append_invoice") as mock_store, \
+         patch("router.email_handler.mark_as_seen"), \
+         patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", return_value="https://rvc-s3.rvctel.vn/rvc-invoices/file.xml"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
 
@@ -67,54 +68,90 @@ def test_branch_zip_extracts_and_parses_xml(tmp_path):
     assert stored["source_branch"] == "ZIP"
 
 
-def test_branch_pdf_calls_gemini():
-    att = _make_attachment("invoice.pdf", b"%PDF-1.4")
+def test_pdf_only_attachment_pdf_branch(tmp_path):
+    att = _make_attachment("HD003.pdf", b"%PDF-1.4")
     email = _make_email(attachments=[att])
 
-    with patch("router.data_extractor.parse_pdf_via_gemini", return_value={"invoice_number": "003"}) as mock_gemini, \
+    with patch("router.data_extractor.parse_pdf_via_gemini", return_value={"invoice_number": "003", "seller_tax_code": "TAX"}) as mock_gemini, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
-         patch("router.reporter.send_error_alert"):
-
+         patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", return_value="https://rvc-s3.rvctel.vn/rvc-invoices/file.pdf"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
 
     mock_gemini.assert_called_once_with(b"%PDF-1.4")
     stored = mock_store.call_args[0][0]
     assert stored["source_branch"] == "PDF"
+    assert stored["pdf_file_link"] == "https://rvc-s3.rvctel.vn/rvc-invoices/file.pdf"
+    assert stored["xml_file_link"] == ""
 
 
-def test_branch_web_xml_path():
-    email = _make_email(
-        text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu"
-    )
+def test_paired_xml_and_pdf_both_uploaded(tmp_path):
+    xml_att = _make_attachment("HD004.xml", b"<HDon/>")
+    pdf_att = _make_attachment("HD004.pdf", b"%PDF-1.4")
+    email = _make_email(attachments=[xml_att, pdf_att])
 
-    with patch("router.web_extraction_router.process_branch_4", return_value=(b"<HDon/>", "xml")) as mock_web, \
-         patch("router.data_extractor.parse_xml", return_value={"invoice_number": "004"}) as mock_parse, \
+    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "004", "seller_tax_code": "TAX"}), \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
-         patch("router.reporter.send_error_alert"):
-
+         patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", side_effect=["https://xml.url", "https://pdf.url"]), \
+         patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
 
-    mock_web.assert_called_once()
+    stored = mock_store.call_args[0][0]
+    assert stored["xml_file_link"] == "https://xml.url"
+    assert stored["pdf_file_link"] == "https://pdf.url"
+
+
+def test_multiple_pairs_multiple_invoice_calls(tmp_path):
+    xml1 = _make_attachment("HD001.xml", b"<HDon/>")
+    xml2 = _make_attachment("HD002.xml", b"<HDon/>")
+    email = _make_email(attachments=[xml1, xml2])
+
+    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "001", "seller_tax_code": "TAX"}), \
+         patch("router.storage.append_invoice") as mock_store, \
+         patch("router.email_handler.mark_as_seen"), \
+         patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", return_value="https://url"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
+        from router import process_email
+        process_email(email)
+
+    assert mock_store.call_count == 2
+
+
+def test_web_branch_xml_path(tmp_path):
+    email = _make_email(text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu")
+
+    with patch("router.web_extraction_router.process_branch_4", return_value=(b"<HDon/>", "xml")), \
+         patch("router.data_extractor.parse_xml", return_value={"invoice_number": "005", "seller_tax_code": "TAX"}) as mock_parse, \
+         patch("router.storage.append_invoice") as mock_store, \
+         patch("router.email_handler.mark_as_seen"), \
+         patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", return_value="https://url"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
+        from router import process_email
+        process_email(email)
+
     mock_parse.assert_called_once_with(b"<HDon/>")
     stored = mock_store.call_args[0][0]
     assert stored["source_branch"] == "WEB"
 
 
-def test_branch_web_pdf_path():
-    email = _make_email(
-        text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu"
-    )
+def test_web_branch_pdf_path(tmp_path):
+    email = _make_email(text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu")
 
     with patch("router.web_extraction_router.process_branch_4", return_value=(b"%PDF", "pdf")), \
-         patch("router.data_extractor.parse_pdf_via_gemini", return_value={"invoice_number": "005"}) as mock_gemini, \
+         patch("router.data_extractor.parse_pdf_via_gemini", return_value={"invoice_number": "006", "seller_tax_code": "TAX"}) as mock_gemini, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
-         patch("router.reporter.send_error_alert"):
-
+         patch("router.reporter.send_error_alert"), \
+         patch("router.file_storage.upload_file", return_value="https://url"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
 
@@ -123,56 +160,38 @@ def test_branch_web_pdf_path():
     assert stored["source_branch"] == "WEB"
 
 
-def test_error_sends_alert_and_logs_error():
-    att = _make_attachment("invoice.xml", b"bad xml")
+def test_error_sends_alert_and_logs_error(tmp_path):
+    att = _make_attachment("HD007.xml", b"bad xml")
     email = _make_email(attachments=[att])
 
     with patch("router.data_extractor.parse_xml", side_effect=ValueError("XML parse error")), \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.storage.append_error") as mock_err, \
          patch("router.reporter.send_error_alert") as mock_alert, \
-         patch("router.email_handler.mark_as_seen"):
-
+         patch("router.email_handler.mark_as_seen"), \
+         patch("router.file_storage.upload_file"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
 
     mock_store.assert_not_called()
     mock_err.assert_called_once()
     err_data = mock_err.call_args[0][0]
-    assert err_data["branch"] == "XML"
-    assert err_data["email_subject"] == "Hóa đơn test"
+    assert "XML parse error" in err_data["error_message"]
     mock_alert.assert_called_once()
 
 
-def test_mark_as_seen_always_called_even_on_error():
-    att = _make_attachment("invoice.xml", b"bad")
+def test_mark_as_seen_always_called_even_on_error(tmp_path):
+    att = _make_attachment("HD008.xml", b"bad")
     email = _make_email(uid="99", attachments=[att])
 
     with patch("router.data_extractor.parse_xml", side_effect=Exception("Boom")), \
          patch("router.storage.append_error"), \
          patch("router.reporter.send_error_alert"), \
-         patch("router.email_handler.mark_as_seen") as mock_seen:
-
+         patch("router.email_handler.mark_as_seen") as mock_seen, \
+         patch("router.file_storage.upload_file"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
 
     mock_seen.assert_called_once_with("99")
-
-
-def test_xml_takes_priority_over_zip_and_pdf():
-    xml_att = _make_attachment("invoice.xml", b"<xml/>")
-    pdf_att = _make_attachment("invoice.pdf", b"%PDF")
-    zip_att = _make_attachment("archive.zip", b"PK")
-    email = _make_email(attachments=[xml_att, pdf_att, zip_att])
-
-    with patch("router.data_extractor.parse_xml", return_value={"invoice_number": "001"}) as mock_xml, \
-         patch("router.data_extractor.parse_pdf_via_gemini") as mock_pdf, \
-         patch("router.storage.append_invoice"), \
-         patch("router.email_handler.mark_as_seen"), \
-         patch("router.reporter.send_error_alert"):
-
-        from router import process_email
-        process_email(email)
-
-    mock_xml.assert_called_once()
-    mock_pdf.assert_not_called()

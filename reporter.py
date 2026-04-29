@@ -1,10 +1,10 @@
 import logging
+import sqlite3
 from datetime import datetime, timedelta
 
-import pandas as pd
 import requests
 
-from config import ERROR_CSV, INVOICE_CSV, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from config import DB_PATH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -40,43 +40,65 @@ def send_daily_report() -> None:
     yesterday_str = yesterday_dt.strftime("%Y-%m-%d")
     report_date = yesterday_dt.strftime("%d/%m/%Y")
 
-    try:
-        inv_df = pd.read_csv(INVOICE_CSV, encoding="utf-8")
-        inv_df["processed_date"] = pd.to_datetime(inv_df["processed_date"])
-        inv_yday = inv_df[inv_df["processed_date"].dt.strftime("%Y-%m-%d") == yesterday_str]
-    except FileNotFoundError:
-        inv_yday = pd.DataFrame(columns=["invoice_type", "total_after_tax"])
-
-    total = len(inv_yday)
-    purchase = inv_yday[inv_yday["invoice_type"] == "PURCHASE"]
-    sale = inv_yday[inv_yday["invoice_type"] == "SALE"]
-
     def fmt(n: float) -> str:
         return f"{n:,.0f}"
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT invoice_type, total_after_tax FROM invoices "
+            "WHERE processed_date LIKE ?",
+            (f"{yesterday_str}%",),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        rows = []
+
+    total = len(rows)
+    purchase = [r for r in rows if r["invoice_type"] == "PURCHASE"]
+    sale = [r for r in rows if r["invoice_type"] == "SALE"]
+
+    def _sum(rlist):
+        s = 0.0
+        for r in rlist:
+            try:
+                s += float(r["total_after_tax"] or 0)
+            except (TypeError, ValueError):
+                pass
+        return s
 
     lines = [
         f"📊 Báo cáo hóa đơn ngày {report_date}",
         "",
         f"✅ Tổng số hóa đơn: {total}",
-        f"📥 Đầu vào (PURCHASE): {len(purchase)} hóa đơn | Tổng tiền: {fmt(purchase['total_after_tax'].sum())} VND",
-        f"📤 Đầu ra (SALE): {len(sale)} hóa đơn | Tổng tiền: {fmt(sale['total_after_tax'].sum())} VND",
+        f"📥 Đầu vào (PURCHASE): {len(purchase)} hóa đơn | Tổng tiền: {fmt(_sum(purchase))} VND",
+        f"📤 Đầu ra (SALE): {len(sale)} hóa đơn | Tổng tiền: {fmt(_sum(sale))} VND",
     ]
 
     try:
-        err_df = pd.read_csv(ERROR_CSV, encoding="utf-8")
-        err_df["error_date"] = pd.to_datetime(err_df["error_date"])
-        err_yday = err_df[err_df["error_date"].dt.strftime("%Y-%m-%d") == yesterday_str]
-        if len(err_yday) > 0:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        err_rows = conn.execute(
+            "SELECT error_date, email_sender, email_subject, error_message "
+            "FROM errors WHERE error_date LIKE ?",
+            (f"{yesterday_str}%",),
+        ).fetchall()
+        conn.close()
+        if err_rows:
             lines.append("")
-            lines.append(f"⚠️ Lỗi xử lý: {len(err_yday)} email")
-            for _, row in err_yday.iterrows():
-                t = pd.to_datetime(row["error_date"]).strftime("%H:%M")
+            lines.append(f"⚠️ Lỗi xử lý: {len(err_rows)} email")
+            for row in err_rows:
+                try:
+                    t = datetime.strptime(row["error_date"], "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+                except Exception:
+                    t = "??"
                 lines.append(
                     f"- [{t}] Từ: {row['email_sender']} | "
                     f"Tiêu đề: {row['email_subject']} | "
                     f"Lỗi: {row['error_message']}"
                 )
-    except FileNotFoundError:
+    except Exception:
         pass
 
     _send_telegram("\n".join(lines))
