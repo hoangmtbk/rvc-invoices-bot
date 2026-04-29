@@ -248,3 +248,45 @@ def test_tier2_returns_none_when_no_matching_links():
     html = '<a href="https://example.com/about">About us</a>'
     result = extract_direct_link(html)
     assert result is None
+
+
+# ── Tier 3 ──────────────────────────────────────────────────────────────────
+
+def test_tier3_routes_easyinvoice_subdomain_to_scrape_easyinvoice():
+    from web_extraction_router import dynamic_web_router
+    xml_bytes = b"<?xml version='1.0'?><HDon/>"
+    with patch("web_extraction_router.scrape_easyinvoice", return_value=xml_bytes) as mock_scraper:
+        result = dynamic_web_router(
+            "https://0310674520hd.easyinvoice.vn/lookup",
+            "CODE123",
+            "",
+        )
+    mock_scraper.assert_called_once_with("https://0310674520hd.easyinvoice.vn/lookup", "CODE123")
+    assert result == (xml_bytes, "xml")
+
+
+def test_tier3_routes_meinvoice_to_scrape_misa():
+    from web_extraction_router import dynamic_web_router
+    xml_bytes = b"<?xml version='1.0'?><HDon/>"
+    with patch("web_extraction_router.scrape_misa", return_value=xml_bytes) as mock_scraper:
+        result = dynamic_web_router(
+            "https://www.meinvoice.vn/tra-cuu",
+            "MKKUXJMAG",
+            "",
+        )
+    mock_scraper.assert_called_once()
+    assert result == (xml_bytes, "xml")
+
+
+def test_tier3_unknown_domain_logs_warning_returns_none(caplog):
+    from web_extraction_router import dynamic_web_router
+    import logging
+    with caplog.at_level(logging.WARNING, logger="web_extraction_router"):
+        result = dynamic_web_router(
+            "https://unknown-portal.vn/invoice",
+            "ABC123",
+            "",
+        )
+    assert result is None
+    assert "Unsupported provider domain" in caplog.text
+    assert "unknown-portal.vn" in caplog.text

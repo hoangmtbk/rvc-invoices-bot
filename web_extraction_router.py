@@ -175,6 +175,25 @@ def scrape_misa(url: str, code: str) -> bytes:
         return data
 
 
+def scrape_easyinvoice(url: str, code: str) -> bytes:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(user_agent=USER_AGENT)
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.fill(
+            'input[placeholder*="mã"], input[id*="lookup"], input[type="text"]:first-of-type',
+            code,
+        )
+        page.click('button[type="submit"], button:has-text("Tra cứu")')
+        page.wait_for_load_state("networkidle", timeout=20000)
+        data = _playwright_download(
+            page,
+            ['a:has-text("XML")', 'button:has-text("Tải XML")', 'a[href*=".xml"]'],
+        )
+        browser.close()
+        return data
+
+
 def scrape_petrolimex(url: str, code: str) -> bytes:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -264,6 +283,42 @@ SCRAPERS: dict = {
     "vnpt-invoice.com.vn": scrape_vnpt,
     "www.meinvoice.vn": scrape_misa,
 }
+
+
+def dynamic_web_router(
+    lookup_url: str,
+    lookup_code: str,
+    email_body: str,
+) -> tuple[bytes, str] | None:
+    domain = urlparse(lookup_url).netloc
+
+    import sys
+    _mod = sys.modules[__name__]
+
+    if "easyinvoice" in domain:
+        scraper_fn = getattr(_mod, "scrape_easyinvoice")
+    elif domain in SCRAPERS:
+        scraper_fn = getattr(_mod, SCRAPERS[domain].__name__)
+    else:
+        logger.warning(
+            f"Unsupported provider domain: {domain}. Pushed to manual review list"
+        )
+        return None
+
+    for attempt in range(2):
+        try:
+            xml_bytes = scraper_fn(lookup_url, lookup_code)
+            logger.info(f"Playwright download success: domain={domain} code={lookup_code}")
+            return xml_bytes, "xml"
+        except Exception as e:
+            if attempt == 0:
+                logger.warning(f"Playwright attempt 1 failed ({domain}): {e}, retrying in 3s")
+                time.sleep(3)
+            else:
+                logger.error(f"Playwright attempt 2 failed ({domain}): {e}")
+                return None
+
+    return None
 
 
 def download_invoice_file(body_text: str, body_html: str) -> tuple[bytes, str]:
