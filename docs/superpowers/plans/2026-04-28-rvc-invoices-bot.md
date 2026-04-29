@@ -4,7 +4,7 @@
 
 **Goal:** Build a fully automated Vietnamese e-invoice email processing bot that extracts structured data from 4 source formats (XML, ZIP, PDF, web portal) and stores it in a unified CSV with daily Telegram reports and real-time error alerts.
 
-**Architecture:** Single Python process in Docker (`rvc-invoices-bot` service), `schedule`-driven loop polling IMAP every 15 minutes and firing a daily 08:00 Telegram report. Four routing branches handle different email attachment types; all funnel into a unified 21-column CSV. Errors are appended to a separate `errors.csv` and immediately alerted via Telegram. `restart: always` ensures crash recovery.
+**Architecture:** Single Python process in Docker (`rvc-invoices-bot` service), `schedule`-driven loop polling IMAP every 15 minutes and firing a daily 08:00 Telegram report. Four routing branches handle different email attachment types; all funnel into a unified 18-column CSV. Errors are appended to a separate `errors.csv` and immediately alerted via Telegram. `restart: always` ensures crash recovery.
 
 **Tech Stack:** Python 3.11-slim, imap-tools, google-generativeai (gemini-2.0-flash), playwright (Chromium headless), schedule, requests (Telegram Bot API), pandas, python-dotenv, pytest, Docker Compose
 
@@ -452,12 +452,12 @@ from config import ERROR_CSV, INVOICE_CSV
 logger = logging.getLogger(__name__)
 
 INVOICE_COLUMNS = [
-    "processed_date", "invoice_type", "invoice_symbol", "invoice_number",
-    "issue_date", "lookup_code", "lookup_website", "seller_name",
-    "seller_tax_code", "seller_address", "buyer_name", "buyer_tax_code",
-    "buyer_address", "payment_method", "bank_account", "total_before_tax",
-    "vat_rate", "total_vat_amount", "total_after_tax", "source_branch",
-    "source_email_subject",
+    "invoice_type", "invoice_symbol", "invoice_number",
+    "issue_date", "seller_name",
+    "seller_tax_code", "buyer_name", "buyer_tax_code",
+    "description", "total_before_tax",
+    "vat_rate", "total_vat_amount", "total_after_tax", "lookup_code", "lookup_website",
+    "source_branch", "source_email_subject", "processed_date",
 ]
 
 ERROR_COLUMNS = [
@@ -2164,7 +2164,7 @@ git commit -m "chore: verify docker build and container startup"
 
 After completing all tasks, verify:
 
-- [ ] `storage.INVOICE_COLUMNS` has exactly 21 columns matching the spec schema
+- [ ] `storage.INVOICE_COLUMNS` has exactly 18 columns matching the spec schema
 - [ ] `_determine_invoice_type` compares against `RVC_TAX_CODE` from config (not hardcoded)
 - [ ] Branch 4 Stage 1 is attempted before Stage 2 in `web_scraper.download_invoice_file()`
 - [ ] Playwright retry fires exactly once (2 total attempts) with 3s sleep between

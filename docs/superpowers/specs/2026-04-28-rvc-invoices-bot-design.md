@@ -144,29 +144,37 @@ SCRAPERS = {
 
 ### Unified Invoice Schema
 
+```python
+INVOICE_COLUMNS = [
+    "invoice_type", "invoice_symbol", "invoice_number",
+    "issue_date", "seller_name",
+    "seller_tax_code", "buyer_name", "buyer_tax_code",
+    "description", "total_before_tax",
+    "vat_rate", "total_vat_amount", "total_after_tax", "lookup_code", "lookup_website",
+    "source_branch", "source_email_subject", "processed_date",
+]
+```
+
 | Field | Type | Notes |
 |-------|------|-------|
-| `processed_date` | datetime | Bot processing timestamp |
 | `invoice_type` | str | `SALE` if `seller_tax_code == "0313028740"`, else `PURCHASE` |
 | `invoice_symbol` | str | e.g. `1C24TKQ` |
 | `invoice_number` | str | e.g. `000001` |
 | `issue_date` | str | From invoice |
-| `lookup_code` | str | WEB: from email body regex; XML/ZIP: from XML data; PDF: from Gemini extraction; `null` if not found |
-| `lookup_website` | str | WEB: from email body URL; XML/ZIP: from XML data; PDF: from Gemini extraction; `null` if not found |
 | `seller_name` | str | |
 | `seller_tax_code` | str | Key field for type determination |
-| `seller_address` | str | |
 | `buyer_name` | str | |
 | `buyer_tax_code` | str | |
-| `buyer_address` | str | |
-| `payment_method` | str | |
-| `bank_account` | str | |
+| `description` | str | |
 | `total_before_tax` | float | |
 | `vat_rate` | str | e.g. `10%` |
 | `total_vat_amount` | float | |
 | `total_after_tax` | float | |
-| `source_branch` | str | `XML`, `ZIP`, `PDF`, `WEB` |
+| `lookup_code` | str | WEB: from email body regex; XML/ZIP: from XML data; PDF: from Gemini extraction; `null` if not found |
+| `lookup_website` | str | WEB: from email body URL; XML/ZIP: from XML data; PDF: from Gemini extraction; `null` if not found |
+| `source_branch` | str | `XML`, `ZIP`, `PDF`, `HTML`, `WEB` |
 | `source_email_subject` | str | Original email subject |
+| `processed_date` | datetime | Bot processing timestamp |
 
 ### Storage Rules (`storage.py`)
 - File: `data/Tong_hop_hoa_don.csv`, encoding `utf-8`

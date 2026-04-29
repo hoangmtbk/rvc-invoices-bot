@@ -52,6 +52,17 @@ def _find_text(root: ET.Element, *tags: str) -> str | None:
     return None
 
 
+def _find_ttkhac(root: ET.Element, *keys: str) -> str | None:
+    # Search <TTKhac><TTin><TTruong>key</TTruong><DLieu>value</DLieu></TTin></TTKhac>
+    for ttin in root.findall(".//TTKhac/TTin"):
+        ttruong = ttin.find("TTruong")
+        if ttruong is not None and ttruong.text and ttruong.text.strip() in keys:
+            dlieu = ttin.find("DLieu")
+            if dlieu is not None and dlieu.text:
+                return dlieu.text.strip()
+    return None
+
+
 def _to_float(value: str | None) -> float | None:
     if value is None:
         return None
@@ -90,8 +101,12 @@ def parse_xml(xml_bytes: bytes) -> dict:
         "seller_tax_code": seller_tax_code,
         "buyer_name": _find_text(nmua, "Ten"),
         "buyer_tax_code": _find_text(nmua, "MST", "MaSoThue"),
-        "contract_number": _find_text(root, "SoHopDong", "SHD", "Số hợp đồng", "contractNumber"),
-        "customer_code": _find_text(nmua, "MaKhachHang", "MaKH", "MaThueBao", "subscriberNumber"),
+        "contract_number": _find_text(root, "SoHopDong", "SHD") or _find_ttkhac(root, "contractNumber"),
+        "customer_code": (
+            _find_text(nmua, "MKHang", "MaKH", "MaThueBao")
+            or _find_ttkhac(nmua, "MaKhachHang")
+            or _find_ttkhac(root, "subscriberNumber")
+        ),
         "description": _find_text(root, "THHDVu", "TenHangHoaDichVu"),
         "total_before_tax": _to_float(_find_text(root, "TgTCThue", "TongTienChuaThue")),
         "vat_rate": _find_text(hhdvu, "TSuat", "ThueSuat") if hhdvu is not None else None,
@@ -118,7 +133,7 @@ def parse_pdf_via_gemini(pdf_bytes: bytes) -> dict:
                 config=types.UploadFileConfig(mime_type="application/pdf")
             )
         response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-04-17",
+            model="gemini-2.5-flash",
             contents=[GEMINI_PROMPT, uploaded]
         )
         raw = response.text.strip()
