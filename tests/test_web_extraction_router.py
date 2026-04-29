@@ -129,3 +129,50 @@ def test_download_invoice_file_raises_unsupported_domain():
     body = "mã tra cứu: ABC123\nhttps://unknown-portal.vn/invoice"
     with pytest.raises(ValueError):
         download_invoice_file(body, "")
+
+
+import base64
+
+
+# ── Tier 1 ──────────────────────────────────────────────────────────────────
+
+VALID_XML_BYTES = b'<?xml version="1.0" encoding="UTF-8"?><Root/>'
+VALID_XML_B64 = base64.b64encode(VALID_XML_BYTES).decode()
+
+
+def test_tier1_extracts_xml_from_hidden_input_by_id():
+    from web_extraction_router import extract_xml_from_html_attachment
+    html = f'<html><body><input type="hidden" id="xmlData" value="{VALID_XML_B64}"/></body></html>'
+    result = extract_xml_from_html_attachment(html)
+    assert result is not None
+    assert result.startswith(b"<?xml")
+
+
+def test_tier1_extracts_xml_from_hidden_input_by_name():
+    from web_extraction_router import extract_xml_from_html_attachment
+    html = f'<html><body><input type="hidden" name="xmlContent" value="{VALID_XML_B64}"/></body></html>'
+    result = extract_xml_from_html_attachment(html)
+    assert result is not None
+    assert result.startswith(b"<?xml")
+
+
+def test_tier1_regex_fallback_finds_base64_in_other_attribute():
+    from web_extraction_router import extract_xml_from_html_attachment
+    html = f'<html><body><div data-payload="{VALID_XML_B64}"></div></body></html>'
+    result = extract_xml_from_html_attachment(html)
+    assert result is not None
+    assert result.startswith(b"<?xml")
+
+
+def test_tier1_returns_none_on_invalid_base64():
+    from web_extraction_router import extract_xml_from_html_attachment
+    html = '<html><body><input type="hidden" id="xmlData" value="not-valid-base64!!!"/></body></html>'
+    result = extract_xml_from_html_attachment(html)
+    assert result is None
+
+
+def test_tier1_returns_none_when_no_hidden_inputs():
+    from web_extraction_router import extract_xml_from_html_attachment
+    html = "<html><body><p>No invoice data here.</p></body></html>"
+    result = extract_xml_from_html_attachment(html)
+    assert result is None

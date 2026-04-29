@@ -1,9 +1,11 @@
+import base64
 import logging
 import re
 import time
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,42 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+_BASE64_RE = re.compile(r"^[A-Za-z0-9+/]{60,}={0,2}$")
+
+
+def extract_xml_from_html_attachment(html_content: str) -> bytes | None:
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        # Strategy 1: <input type="hidden"> whose id or name contains "xml"
+        for tag in soup.find_all("input", {"type": "hidden"}):
+            tag_id = (tag.get("id") or "").lower()
+            tag_name = (tag.get("name") or "").lower()
+            if "xml" in tag_id or "xml" in tag_name:
+                value = tag.get("value", "")
+                try:
+                    decoded = base64.b64decode(value)
+                    if decoded.strip().startswith((b"<?xml", b"<")):
+                        return decoded
+                except Exception:
+                    pass
+
+        # Strategy 2: regex sweep — any attribute value that looks like Base64
+        for tag in soup.find_all(True):
+            for attr_val in tag.attrs.values():
+                if not isinstance(attr_val, str):
+                    continue
+                if _BASE64_RE.match(attr_val.strip()):
+                    try:
+                        decoded = base64.b64decode(attr_val.strip())
+                        if decoded.strip().startswith((b"<?xml", b"<")):
+                            return decoded
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.debug(f"extract_xml_from_html_attachment error: {e}")
+
+    return None
 
 
 def _extract_urls(text: str) -> list[str]:
