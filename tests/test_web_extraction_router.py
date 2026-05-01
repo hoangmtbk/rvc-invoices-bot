@@ -312,3 +312,71 @@ def test_process_branch_web_returns_scraped_result_on_success():
 
     assert result is not None
     assert result.xml_bytes == b"<xml/>"
+
+
+def test_process_branch_web_collects_both_xml_and_pdf():
+    """When an email contains both an XML link and a PDF link, both are saved."""
+    import tempfile
+    from web_extraction_router import process_branch_web
+
+    email = MagicMock()
+    email.html = (
+        "Download XML: https://0319051009-tt78.vnpt-invoice.com.vn/invoice/getinvoice?token=ABC "
+        "Download PDF: https://0319051009-tt78.vnpt-invoice.com.vn/invoice/getpdf?token=XYZ"
+    )
+    email.text = ""
+    email.uid = "uid110"
+
+    xml_resp = MagicMock()
+    xml_resp.headers = {"Content-Type": "application/xml"}
+    xml_resp.content = b"<?xml version='1.0'?><HDon/>"
+    xml_resp.raise_for_status = MagicMock()
+
+    pdf_resp = MagicMock()
+    pdf_resp.headers = {"Content-Type": "application/pdf"}
+    pdf_resp.content = b"%PDF-1.4 fake"
+    pdf_resp.raise_for_status = MagicMock()
+
+    def side_effect(url, **kwargs):
+        if "getinvoice" in url:
+            return xml_resp
+        return pdf_resp
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("web_extraction_router.requests.get", side_effect=side_effect):
+            result = process_branch_web(email, tmp)
+
+    assert result is not None
+    assert result.xml_bytes == b"<?xml version='1.0'?><HDon/>"
+    assert result.pdf_bytes == b"%PDF-1.4 fake"
+    assert result.xml_path is not None
+    assert result.pdf_path is not None
+
+
+def test_try_direct_download_prefers_xml_over_pdf_when_pdf_comes_first():
+    """If PDF URL appears before XML URL, XML should still be returned."""
+    pdf_resp = MagicMock()
+    pdf_resp.headers = {"Content-Type": "application/pdf"}
+    pdf_resp.content = b"%PDF-1.4 fake"
+    pdf_resp.raise_for_status = MagicMock()
+
+    xml_resp = MagicMock()
+    xml_resp.headers = {"Content-Type": "application/xml"}
+    xml_resp.content = b"<?xml version='1.0'?><HDon/>"
+    xml_resp.raise_for_status = MagicMock()
+
+    def side_effect(url, **kwargs):
+        if "getpdf" in url:
+            return pdf_resp
+        return xml_resp
+
+    with patch("web_extraction_router.requests.get", side_effect=side_effect):
+        from web_extraction_router import _try_direct_download
+        result = _try_direct_download([
+            "https://example.com/invoice/getpdf?token=XYZ",
+            "https://example.com/invoice/getinvoice?token=ABC",
+        ])
+
+    assert result is not None
+    _, ctype = result
+    assert ctype == "xml"
