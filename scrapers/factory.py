@@ -23,7 +23,7 @@ def _get_registry() -> dict[str, type]:
 class ScraperFactory:
     @classmethod
     def get(cls, url: str, page, lookup_code: str) -> BaseInvoiceScraper:
-        netloc = urlparse(url).netloc.lower()
+        netloc = (urlparse(url).hostname or "").lower()
         registry = _get_registry()
         for key, scraper_cls in registry.items():
             if netloc == key or netloc.endswith("." + key):

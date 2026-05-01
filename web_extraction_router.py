@@ -140,7 +140,7 @@ def _pick_best_url(urls: list[str]) -> str | None:
     known = []
     for url in urls:
         try:
-            netloc = urlparse(url).netloc.lower()
+            netloc = (urlparse(url).hostname or "").lower()
             for key in registry_keys:
                 if netloc == key or netloc.endswith("." + key):
                     known.append(url)
@@ -164,7 +164,8 @@ def process_branch_web(email, download_dir: str) -> ScrapedResult | None:
     if direct:
         file_bytes, content_type = direct
         uid = getattr(email, "uid", "unknown")
-        fname = os.path.join(download_dir, f"direct_{uid}.{content_type}")
+        safe_uid = re.sub(r"[^A-Za-z0-9_\-]", "_", str(uid))
+        fname = os.path.join(download_dir, f"direct_{safe_uid}.{content_type}")
         with open(fname, "wb") as f:
             f.write(file_bytes)
         if content_type == "xml":
