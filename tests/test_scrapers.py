@@ -114,3 +114,54 @@ def test_factory_unknown_raises():
     page = MagicMock()
     with pytest.raises(ScraperNotSupportedException):
         ScraperFactory.get("https://unknown-provider.vn/invoice", page, "CODE")
+
+
+from scrapers import scrape_invoice
+
+
+def test_scrape_invoice_raises_for_unknown_domain():
+    with patch("scrapers.sync_playwright") as mock_pw, \
+         patch("scrapers.build_stealth_context") as mock_ctx:
+        mock_pw.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_pw.return_value.__exit__ = MagicMock(return_value=False)
+        mock_browser = MagicMock()
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_ctx.return_value = (mock_browser, mock_context)
+        mock_context.new_page.return_value = mock_page
+
+        with pytest.raises(ScraperNotSupportedException):
+            scrape_invoice("https://unknown-provider.vn/invoice", "CODE")
+
+
+def test_scrape_invoice_saves_files_when_download_dir_given(tmp_path):
+    mock_result = ScrapedResult(xml_bytes=b"<xml/>", pdf_bytes=b"%PDF")
+
+    with patch("scrapers.sync_playwright") as mock_pw, \
+         patch("scrapers.build_stealth_context") as mock_ctx, \
+         patch("scrapers.ScraperFactory") as mock_factory_cls, \
+         patch("scrapers.stealth_sync"):
+
+        mock_browser = MagicMock()
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_ctx.return_value = (mock_browser, mock_context)
+        mock_context.new_page.return_value = mock_page
+        mock_scraper = MagicMock()
+        mock_scraper.scrape.return_value = mock_result
+        mock_factory_cls.get.return_value = mock_scraper
+
+        mock_playwright_instance = MagicMock()
+        mock_pw.return_value.__enter__ = MagicMock(return_value=mock_playwright_instance)
+        mock_pw.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = scrape_invoice(
+            "https://0102362584001hd.easyinvoice.com.vn/Search/Index",
+            "CODE123",
+            download_dir=str(tmp_path),
+        )
+
+    assert result.xml_path is not None
+    assert result.pdf_path is not None
+    assert (tmp_path / "web_CODE123.xml").exists()
+    assert (tmp_path / "web_CODE123.pdf").exists()
