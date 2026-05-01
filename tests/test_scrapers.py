@@ -79,3 +79,38 @@ def test_handle_captcha_raises_when_gemini_returns_empty():
             with patch("os.unlink"):
                 with pytest.raises(CaptchaRequiredException):
                     scraper._handle_captcha_if_present()
+
+
+from scrapers.factory import ScraperFactory
+from scrapers.exceptions import ScraperNotSupportedException
+
+
+def test_factory_easyinvoice_subdomain():
+    from scrapers.easyinvoice import EasyInvoiceScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get(
+        "https://0102362584001hd.easyinvoice.com.vn/Search/Index", page, "CODE"
+    )
+    assert isinstance(scraper, EasyInvoiceScraper)
+
+
+def test_factory_vnpt_subdomain():
+    from scrapers.vnpt import VnptScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get(
+        "https://6101145281-tt78.vnpt-invoice.com.vn/lookup", page, "CODE"
+    )
+    assert isinstance(scraper, VnptScraper)
+
+
+def test_factory_meinvoice():
+    from scrapers.misa import MisaScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get("https://www.meinvoice.vn/tra-cuu", page, "CODE")
+    assert isinstance(scraper, MisaScraper)
+
+
+def test_factory_unknown_raises():
+    page = MagicMock()
+    with pytest.raises(ScraperNotSupportedException):
+        ScraperFactory.get("https://unknown-provider.vn/invoice", page, "CODE")
