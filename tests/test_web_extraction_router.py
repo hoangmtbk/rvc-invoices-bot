@@ -250,93 +250,65 @@ def test_tier2_returns_none_when_no_matching_links():
     assert result is None
 
 
-# ── Tier 3 ──────────────────────────────────────────────────────────────────
 
-def test_tier3_routes_easyinvoice_subdomain_to_scrape_easyinvoice():
-    from web_extraction_router import dynamic_web_router
-    xml_bytes = b"<?xml version='1.0'?><HDon/>"
-    with patch("web_extraction_router.scrape_easyinvoice", return_value=xml_bytes) as mock_scraper:
-        result = dynamic_web_router(
-            "https://0310674520hd.easyinvoice.vn/lookup",
-            "CODE123",
-            "",
-        )
-    mock_scraper.assert_called_once_with("https://0310674520hd.easyinvoice.vn/lookup", "CODE123")
-    assert result == (xml_bytes, "xml")
+def test_pick_best_url_prefers_subdomain_over_root():
+    from web_extraction_router import _pick_best_url
+    urls = [
+        "https://easyinvoice.com.vn",
+        "https://0102362584001hd.easyinvoice.com.vn/Search/Index",
+    ]
+    result = _pick_best_url(urls)
+    assert "0102362584001hd" in result
 
 
-def test_tier3_routes_meinvoice_to_scrape_misa():
-    from web_extraction_router import dynamic_web_router
-    xml_bytes = b"<?xml version='1.0'?><HDon/>"
-    with patch("web_extraction_router.scrape_misa", return_value=xml_bytes) as mock_scraper:
-        result = dynamic_web_router(
-            "https://www.meinvoice.vn/tra-cuu",
-            "MKKUXJMAG",
-            "",
-        )
-    mock_scraper.assert_called_once()
-    assert result == (xml_bytes, "xml")
+def test_pick_best_url_returns_none_for_empty():
+    from web_extraction_router import _pick_best_url
+    assert _pick_best_url([]) is None
 
 
-def test_tier3_unknown_domain_logs_warning_returns_none(caplog):
-    from web_extraction_router import dynamic_web_router
-    import logging
-    with caplog.at_level(logging.WARNING, logger="web_extraction_router"):
-        result = dynamic_web_router(
-            "https://unknown-portal.vn/invoice",
-            "ABC123",
-            "",
-        )
-    assert result is None
-    assert "Unsupported provider domain" in caplog.text
-    assert "unknown-portal.vn" in caplog.text
+def test_pick_best_url_unknown_domain_falls_back_to_first():
+    from web_extraction_router import _pick_best_url
+    urls = ["https://unknown.vn/a", "https://another.vn/b"]
+    result = _pick_best_url(urls)
+    assert result == "https://unknown.vn/a"
 
 
-# ── process_branch_4 ─────────────────────────────────────────────────────────
+def test_process_branch_web_returns_none_when_no_url_or_code():
+    import tempfile
+    from web_extraction_router import process_branch_web
 
-def test_process_branch4_tier2_success_skips_tier3():
-    from web_extraction_router import process_branch_4
     email = MagicMock()
-    email.html = '<a href="https://example.com/getXml?id=1">Tải XML</a>'
-    email.text = ""
+    email.html = "<p>No invoice info here</p>"
+    email.text = "No invoice info here"
+    email.uid = "test123"
 
-    xml_resp = MagicMock()
-    xml_resp.headers = {"Content-Type": "application/xml"}
-    xml_resp.content = b"<?xml version='1.0'?><HDon/>"
-    xml_resp.raise_for_status = MagicMock()
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("web_extraction_router.extract_direct_link", return_value=None):
+            result = process_branch_web(email, tmp)
+    assert result is None
 
-    with patch("web_extraction_router.requests.get", return_value=xml_resp), \
-         patch("web_extraction_router.dynamic_web_router") as mock_t3:
-        result = process_branch_4(email)
+
+def test_process_branch_web_returns_scraped_result_on_success():
+    import tempfile
+    from web_extraction_router import process_branch_web
+    from scrapers.result import ScrapedResult
+
+    email = MagicMock()
+    email.html = (
+        '<p>Mã tra cứu: MYCODE123 '
+        '<a href="https://0102362584001hd.easyinvoice.com.vn/Search/Index">link</a></p>'
+    )
+    email.text = "Mã tra cứu: MYCODE123"
+    email.uid = "uid999"
+
+    mock_result = ScrapedResult(
+        xml_bytes=b"<xml/>",
+        xml_path="/tmp/web_MYCODE123.xml",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("web_extraction_router.extract_direct_link", return_value=None), \
+             patch("web_extraction_router.scrape_invoice", return_value=mock_result):
+            result = process_branch_web(email, tmp)
 
     assert result is not None
-    assert result[1] == "xml"
-    mock_t3.assert_not_called()
-
-
-def test_process_branch4_tier2_fails_tier3_succeeds():
-    from web_extraction_router import process_branch_4
-    email = MagicMock()
-    email.html = ""
-    email.text = "mã tra cứu: MKKUXJMAG\nhttps://www.meinvoice.vn/tra-cuu"
-
-    with patch("web_extraction_router.extract_direct_link", return_value=None), \
-         patch("web_extraction_router.dynamic_web_router",
-               return_value=(b"<?xml?><HDon/>", "xml")) as mock_t3:
-        result = process_branch_4(email)
-
-    assert result == (b"<?xml?><HDon/>", "xml")
-    mock_t3.assert_called_once()
-
-
-def test_process_branch4_both_tiers_fail_returns_none():
-    from web_extraction_router import process_branch_4
-    email = MagicMock()
-    email.html = ""
-    email.text = "Nothing useful here."
-
-    with patch("web_extraction_router.extract_direct_link", return_value=None), \
-         patch("web_extraction_router.dynamic_web_router", return_value=None):
-        result = process_branch_4(email)
-
-    assert result is None
+    assert result.xml_bytes == b"<xml/>"
