@@ -11,12 +11,11 @@ def _get_registry() -> dict[str, type]:
     from .viettel import ViettelScraper
     from .vnpt import VnptScraper
     return {
-        "easyinvoice.com.vn":           EasyInvoiceScraper,
-        "meinvoice.vn":                 MisaScraper,
-        "misa.vn":                      MisaScraper,
-        "hoadon.petrolimex.com.vn":     PetrolimexScraper,
-        "vietteltelecom.vn":            ViettelScraper,
-        "vnpt-invoice.com.vn":          VnptScraper,
+        "easyinvoice.vn":                   EasyInvoiceScraper,
+        "meinvoice.vn/tra-cuu":             MisaScraper,
+        "hoadon.petrolimex.com.vn":         PetrolimexScraper,
+        "vietteltelecom.vn":                ViettelScraper,
+        "vnpt-invoice.com.vn":              VnptScraper,
     }
 
 

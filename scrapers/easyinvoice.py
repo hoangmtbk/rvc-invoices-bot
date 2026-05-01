@@ -32,8 +32,8 @@ class EasyInvoiceScraper(BaseInvoiceScraper):
                 )
 
         xml_bytes = self._try_download(
-            "button:has-text('Tải XML')",
-            "a:has-text('Tải XML')",
+            "button:has-text('Tải tệp XML')",
+            "a:has-text('Tải tệp XML')",
         )
         if xml_bytes is None:
             master = self.page.locator(
@@ -43,7 +43,7 @@ class EasyInvoiceScraper(BaseInvoiceScraper):
                 master.first.hover()
                 self._delay(0.3, 0.7)
                 master.first.click()
-                xml_bytes = self._try_download("text='XML'")
+                xml_bytes = self._try_download("text='Tải tệp XML'")
 
         pdf_bytes = self._try_download(
             "button:has-text('Tải PDF')",

@@ -18,11 +18,17 @@ DIRECT_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 URL_RE = re.compile(r"https?://[^\s\"<>]+", re.IGNORECASE)
+# REGEX_PATTERNS = [
+#     re.compile(r"mã số[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
+#     re.compile(r"mã tra cứu[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
+#     re.compile(r"mã nhận hóa đơn[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
+#     re.compile(r"Mã bí mật[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
+# ]
 REGEX_PATTERNS = [
-    re.compile(r"mã số[\s:]*([A-Z0-9_]+)", re.IGNORECASE),
-    re.compile(r"mã tra cứu[\s:]*([A-Z0-9_]+)", re.IGNORECASE),
-    re.compile(r"mã nhận hóa đơn[\s:]*([A-Z0-9_]+)", re.IGNORECASE),
-    re.compile(r"Mã bí mật[\s:]*([A-Z0-9_]+)", re.IGNORECASE),
+    re.compile(r"mã số.*?[\s:]*([A-Z0-9_]+\*?)$", re.IGNORECASE),
+    re.compile(r"mã tra cứu.*?[\s:]*([A-Z0-9_]+\*?)$", re.IGNORECASE),
+    re.compile(r"mã nhận hóa đơn.*?[\s:]*([A-Z0-9_]+\*?)$", re.IGNORECASE),
+    re.compile(r"mã bí mật.*?[\s:]*([A-Z0-9_]+\*?)$", re.IGNORECASE),
 ]
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -201,8 +207,8 @@ def process_branch_web(email, download_dir: str) -> ScrapedResult | None:
     email_body_text = email.text or ""
     combined = email_body_text + " " + email_body_html
 
-    logger.debug(f"process_branch_web email body text:\n{email_body_text}")
-    logger.debug(f"process_branch_web email body html:\n{email_body_html}")
+    #logger.debug(f"process_branch_web email body text:\n{email_body_text}")
+    #logger.debug(f"process_branch_web email body html:\n{email_body_html}")
 
     uid = getattr(email, "uid", "unknown")
     safe_uid = re.sub(r"[^A-Za-z0-9_\-]", "_", str(uid))
