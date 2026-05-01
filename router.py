@@ -140,6 +140,7 @@ def process_email(email) -> None:
 
         branch = "WEB"
         logger.info(f"Branch WEB | uid={email.uid} | subject='{subject}'")
+        os.makedirs(uid_temp, exist_ok=True)
         result = web_extraction_router.process_branch_web(email, uid_temp)
         if result is None:
             raise ValueError("All extraction tiers failed — no XML or PDF retrieved")
