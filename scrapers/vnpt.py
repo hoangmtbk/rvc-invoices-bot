@@ -295,14 +295,74 @@ def _classify_bytes(data: bytes) -> str | None:
     return None
 
 
+def _capsolver_solve(image_path: str) -> str | None:
+    """Submit captcha image to Capsolver API; return 4-digit string or None."""
+    import base64
+    import time
+    import requests as _requests
+
+    with open(image_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+
+    api_key = os.environ["CAPSOLVER_API_KEY"]
+    create_resp = _requests.post(
+        "https://api.capsolver.com/createTask",
+        json={"clientKey": api_key, "task": {"type": "ImageToTextTask", "body": b64}},
+        timeout=15,
+    ).json()
+    task_id = create_resp.get("taskId")
+    if not task_id:
+        logger.debug("VNPT: Capsolver createTask returned no taskId: %s", create_resp)
+        return None
+
+    for _ in range(10):
+        time.sleep(1)
+        result_resp = _requests.post(
+            "https://api.capsolver.com/getTaskResult",
+            json={"clientKey": api_key, "taskId": task_id},
+            timeout=10,
+        ).json()
+        if result_resp.get("status") == "ready":
+            return result_resp.get("solution", {}).get("text", "")
+
+    logger.debug("VNPT: Capsolver timed out waiting for task %s", task_id)
+    return None
+
+
 def _solve_vnpt_captcha(image_path: str) -> str:
     """
-    VNPT captchas show 4 distorted digits. Upscale + sharpen before sending to Gemini.
-    Uses gemini-2.5-flash for best digit OCR accuracy.
+    Tiered captcha solver: ddddocr on raw image → Capsolver (if key set) → Gemini with preprocessing.
+    ddddocr receives the raw screenshot; Pillow preprocessing runs only for Gemini.
     """
-    img = PIL.Image.open(image_path).convert("L")       # greyscale
+    # Solver 1: ddddocr on raw screenshot bytes
+    try:
+        import ddddocr
+        ocr = ddddocr.DdddOcr(show_ad=False)
+        with open(image_path, "rb") as f:
+            raw_result = re.sub(r"\s+", "", ocr.classification(f.read()))
+        if re.fullmatch(r"[0-9]{4}", raw_result):
+            logger.info("VNPT: ddddocr captcha result = '%s'", raw_result)
+            return raw_result
+        logger.debug("VNPT: ddddocr returned non-4-digit '%s', trying next solver", raw_result)
+    except Exception as exc:
+        logger.debug("VNPT: ddddocr solver failed: %s", exc)
+
+    # Solver 2: Capsolver (only when CAPSOLVER_API_KEY env var is set)
+    if os.environ.get("CAPSOLVER_API_KEY"):
+        try:
+            cap_result = _capsolver_solve(image_path)
+            if cap_result and re.fullmatch(r"[0-9]{4}", re.sub(r"\s+", "", cap_result)):
+                result = re.sub(r"\s+", "", cap_result)
+                logger.info("VNPT: Capsolver captcha result = '%s'", result)
+                return result
+            logger.debug("VNPT: Capsolver returned non-4-digit '%s', falling back to Gemini", cap_result)
+        except Exception as exc:
+            logger.debug("VNPT: Capsolver solver failed: %s", exc)
+
+    # Solver 3: Gemini with Pillow preprocessing (existing logic)
+    img = PIL.Image.open(image_path).convert("L")
     w, h = img.size
-    img = img.resize((w * 4, h * 4), PIL.Image.LANCZOS) # 4× upscale
+    img = img.resize((w * 4, h * 4), PIL.Image.LANCZOS)
     img = img.filter(PIL.ImageFilter.SHARPEN)
     img = PIL.ImageEnhance.Contrast(img).enhance(2.5)
     img = img.convert("RGB")

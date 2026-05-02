@@ -390,3 +390,83 @@ def test_scrape_bypass_path_raises_when_no_files_downloaded():
          patch.object(s, "_download_all_files", return_value=(None, None)), \
          pytest.raises(InvoiceNotFoundException):
         s.scrape()
+
+
+# ── tiered OCR pipeline tests ────────────────────────────────────────────────
+
+import sys
+import PIL.Image as _PILImage
+
+
+def _make_png(tmp_path) -> str:
+    """Write a minimal 40x20 greyscale PNG and return its path."""
+    p = tmp_path / "cap.png"
+    _PILImage.new("L", (40, 20)).save(str(p))
+    return str(p)
+
+
+def test_solve_captcha_uses_ddddocr_when_returns_4_digits(tmp_path):
+    # _solve_vnpt_captcha does `import ddddocr` locally at call time;
+    # patching sys.modules["ddddocr"] before the call injects our mock.
+    img_path = _make_png(tmp_path)
+    mock_ddddocr = MagicMock()
+    mock_ocr = MagicMock()
+    mock_ocr.classification.return_value = "5678"
+    mock_ddddocr.DdddOcr.return_value = mock_ocr
+
+    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}):
+        result = _solve_vnpt_captcha(img_path)
+
+    assert result == "5678"
+    mock_ocr.classification.assert_called_once()
+
+
+def test_solve_captcha_falls_back_to_gemini_when_ddddocr_returns_non_digits(tmp_path):
+    img_path = _make_png(tmp_path)
+    mock_ddddocr = MagicMock()
+    mock_ocr = MagicMock()
+    mock_ocr.classification.return_value = "AB1C"   # letters — invalid
+    mock_ddddocr.DdddOcr.return_value = mock_ocr
+
+    mock_response = MagicMock()
+    mock_response.text = "1234"
+
+    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
+         patch("scrapers.vnpt._get_gemini_client") as mock_gc:
+        mock_gc.return_value.models.generate_content.return_value = mock_response
+        result = _solve_vnpt_captcha(img_path)
+
+    assert result == "1234"
+    mock_gc.return_value.models.generate_content.assert_called_once()
+
+
+def test_solve_captcha_falls_back_to_gemini_when_ddddocr_raises(tmp_path):
+    img_path = _make_png(tmp_path)
+    mock_ddddocr = MagicMock()
+    mock_ddddocr.DdddOcr.side_effect = RuntimeError("model load failed")
+
+    mock_response = MagicMock()
+    mock_response.text = "9876"
+
+    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
+         patch("scrapers.vnpt._get_gemini_client") as mock_gc:
+        mock_gc.return_value.models.generate_content.return_value = mock_response
+        result = _solve_vnpt_captcha(img_path)
+
+    assert result == "9876"
+
+
+def test_solve_captcha_uses_capsolver_when_key_set_and_ddddocr_fails(tmp_path):
+    img_path = _make_png(tmp_path)
+    mock_ddddocr = MagicMock()
+    mock_ddddocr.DdddOcr.side_effect = RuntimeError("model load failed")
+
+    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
+         patch.dict("os.environ", {"CAPSOLVER_API_KEY": "test-key"}), \
+         patch("scrapers.vnpt._capsolver_solve", return_value="4321") as mock_cap, \
+         patch("scrapers.vnpt._get_gemini_client") as mock_gc:
+        result = _solve_vnpt_captcha(img_path)
+
+    assert result == "4321"
+    mock_cap.assert_called_once_with(img_path)
+    mock_gc.assert_not_called()
