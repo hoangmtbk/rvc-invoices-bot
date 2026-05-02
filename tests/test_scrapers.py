@@ -225,7 +225,8 @@ def test_vnpt_scrape_raises_after_max_captcha_retries():
     with patch.object(s, "_probe_bypass", return_value=False), \
          patch.object(s, "_fill_lookup_code"), \
          patch.object(s, "_screenshot_and_solve_captcha", return_value=""), \
-         pytest.raises(CaptchaRequiredException, match="empty"):
+         patch.object(s, "_refresh_captcha_image"), \
+         pytest.raises(CaptchaRequiredException, match="3 attempts"):
         s.scrape()
 
 
@@ -471,3 +472,28 @@ def test_solve_captcha_uses_capsolver_when_key_set_and_ddddocr_fails(tmp_path):
     assert result == "4321"
     mock_cap.assert_called_once_with(img_path)
     mock_gc.assert_not_called()
+
+
+# ── pre-submission validation tests ─────────────────────────────────────────
+
+def test_vnpt_scrape_skips_submit_when_solution_is_not_4_digits():
+    """Invalid solver output must refresh captcha and not call _enter_captcha/_submit."""
+    page = MagicMock()
+    page.goto = MagicMock()
+    page.mouse = MagicMock()
+
+    s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
+
+    with patch.object(s, "_probe_bypass", return_value=False), \
+         patch.object(s, "_fill_lookup_code"), \
+         patch.object(s, "_screenshot_and_solve_captcha", return_value="AB1C"), \
+         patch.object(s, "_enter_captcha") as mock_enter, \
+         patch.object(s, "_submit_and_wait_for_results") as mock_submit, \
+         patch.object(s, "_refresh_captcha_image") as mock_refresh, \
+         pytest.raises(CaptchaRequiredException, match="3 attempts"):
+        s.scrape()
+
+    mock_enter.assert_not_called()
+    mock_submit.assert_not_called()
+    # refresh called on first 2 failures (not on last attempt)
+    assert mock_refresh.call_count == 2

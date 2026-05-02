@@ -57,8 +57,13 @@ class VnptScraper(BaseInvoiceScraper):
         for attempt in range(_MAX_CAPTCHA_RETRIES):
             self._fill_lookup_code()
             solution = self._screenshot_and_solve_captcha()
-            if not solution:
-                raise CaptchaRequiredException("VNPT: Gemini returned empty captcha solution")
+            if not solution or not re.fullmatch(r"[0-9]{4}", solution):
+                logger.warning(
+                    "VNPT: solver returned invalid solution '%s', refreshing captcha", solution
+                )
+                if attempt < _MAX_CAPTCHA_RETRIES - 1:
+                    self._refresh_captcha_image()
+                continue
             logger.info("VNPT attempt %d/%d: captcha='%s'", attempt + 1, _MAX_CAPTCHA_RETRIES, solution)
             self._enter_captcha(solution)
 
@@ -66,12 +71,14 @@ class VnptScraper(BaseInvoiceScraper):
                 break
 
             if attempt < _MAX_CAPTCHA_RETRIES - 1:
-                logger.warning("VNPT: results table absent after attempt %d, refreshing captcha", attempt + 1)
-                self._refresh_captcha_image()
-            else:
-                raise CaptchaRequiredException(
-                    f"VNPT: captcha failed after {_MAX_CAPTCHA_RETRIES} attempts"
+                logger.warning(
+                    "VNPT: results table absent after attempt %d, refreshing captcha", attempt + 1
                 )
+                self._refresh_captcha_image()
+        else:
+            raise CaptchaRequiredException(
+                f"VNPT: captcha failed after {_MAX_CAPTCHA_RETRIES} attempts"
+            )
 
         self._assert_invoice_found()
 
