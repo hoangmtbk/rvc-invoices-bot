@@ -289,7 +289,7 @@ def test_vnpt_download_all_files_falls_back_to_pdf_href():
 
 
 def test_vnpt_enter_captcha_clears_field_with_triple_click():
-    """_enter_captcha must call triple_click before press_sequentially, not just click."""
+    """_enter_captcha must call click(click_count=3) before press_sequentially."""
     page = MagicMock()
     el = MagicMock()
     el.count.return_value = 1
@@ -298,12 +298,10 @@ def test_vnpt_enter_captcha_clears_field_with_triple_click():
     s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
     s._enter_captcha("1234")
 
-    el.triple_click.assert_called_once()
+    el.click.assert_called_once_with(click_count=3)
     el.press_sequentially.assert_called_once()
     args, _ = el.press_sequentially.call_args
     assert args[0] == "1234"
-    # Must NOT call .click() (which would deselect the triple-click selection)
-    el.click.assert_not_called()
 
 
 def test_vnpt_refresh_captcha_uses_javascript_not_click():

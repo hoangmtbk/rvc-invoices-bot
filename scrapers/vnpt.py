@@ -96,7 +96,7 @@ class VnptScraper(BaseInvoiceScraper):
     def _fill_lookup_code(self) -> None:
         el = self.page.locator(_CODE_SEL).first
         el.wait_for(state="visible", timeout=10_000)
-        el.triple_click()
+        el.click(click_count=3)
         self._delay(0.1, 0.3)
         el.press_sequentially(self.lookup_code, delay=80)
         self._delay(0.2, 0.5)
@@ -121,7 +121,7 @@ class VnptScraper(BaseInvoiceScraper):
         """
         el = self.page.locator(_CAPTCHA_INPUT).first
         el.wait_for(state="visible", timeout=10_000)
-        el.triple_click()                                      # select all
+        el.click(click_count=3)                                # select all
         self._delay(0.1, 0.2)
         el.press_sequentially(solution, delay=random.randint(80, 150))
         self._delay(0.2, 0.5)
