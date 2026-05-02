@@ -1,3 +1,6 @@
+import sys
+
+import PIL.Image as _PILImage
 import pytest
 from scrapers.result import ScrapedResult
 from scrapers.exceptions import (
@@ -394,9 +397,6 @@ def test_scrape_bypass_path_raises_when_no_files_downloaded():
 
 # ── tiered OCR pipeline tests ────────────────────────────────────────────────
 
-import sys
-import PIL.Image as _PILImage
-
 
 def _make_png(tmp_path) -> str:
     """Write a minimal 40x20 greyscale PNG and return its path."""
@@ -449,6 +449,7 @@ def test_solve_captcha_falls_back_to_gemini_when_ddddocr_raises(tmp_path):
     mock_response.text = "9876"
 
     with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
+         patch.dict("os.environ", {"CAPSOLVER_API_KEY": ""}), \
          patch("scrapers.vnpt._get_gemini_client") as mock_gc:
         mock_gc.return_value.models.generate_content.return_value = mock_response
         result = _solve_vnpt_captcha(img_path)

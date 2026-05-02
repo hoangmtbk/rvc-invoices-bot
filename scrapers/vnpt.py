@@ -1,8 +1,10 @@
+import base64
 import logging
 import os
 import random
 import re
 import tempfile
+import time
 
 import PIL.Image
 import PIL.ImageEnhance
@@ -297,14 +299,14 @@ def _classify_bytes(data: bytes) -> str | None:
 
 def _capsolver_solve(image_path: str) -> str | None:
     """Submit captcha image to Capsolver API; return 4-digit string or None."""
-    import base64
-    import time
     import requests as _requests
+
+    api_key = os.environ.get("CAPSOLVER_API_KEY", "")
+    if not api_key:
+        return None
 
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-
-    api_key = os.environ["CAPSOLVER_API_KEY"]
     create_resp = _requests.post(
         "https://api.capsolver.com/createTask",
         json={"clientKey": api_key, "task": {"type": "ImageToTextTask", "body": b64}},
@@ -351,10 +353,11 @@ def _solve_vnpt_captcha(image_path: str) -> str:
     if os.environ.get("CAPSOLVER_API_KEY"):
         try:
             cap_result = _capsolver_solve(image_path)
-            if cap_result and re.fullmatch(r"[0-9]{4}", re.sub(r"\s+", "", cap_result)):
-                result = re.sub(r"\s+", "", cap_result)
-                logger.info("VNPT: Capsolver captcha result = '%s'", result)
-                return result
+            if cap_result:
+                stripped = re.sub(r"\s+", "", cap_result)
+                if re.fullmatch(r"[0-9]{4}", stripped):
+                    logger.info("VNPT: Capsolver captcha result = '%s'", stripped)
+                    return stripped
             logger.debug("VNPT: Capsolver returned non-4-digit '%s', falling back to Gemini", cap_result)
         except Exception as exc:
             logger.debug("VNPT: Capsolver solver failed: %s", exc)
