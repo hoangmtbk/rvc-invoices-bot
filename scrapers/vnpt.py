@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import re
 import tempfile
 
@@ -99,7 +100,6 @@ class VnptScraper(BaseInvoiceScraper):
         _type() from the base class places cursor but does NOT clear existing text —
         on a retry the old wrong digits would be left in the field.
         """
-        import random
         el = self.page.locator(_CAPTCHA_INPUT).first
         el.wait_for(state="visible", timeout=10_000)
         el.triple_click()                                      # select all
