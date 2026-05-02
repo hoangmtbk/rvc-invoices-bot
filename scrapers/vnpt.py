@@ -42,6 +42,16 @@ class VnptScraper(BaseInvoiceScraper):
         self.page.goto(self.url, wait_until="networkidle")
         self._scroll()
 
+        if self._probe_bypass():
+            logger.info("VNPT: captcha bypass confirmed — skipping OCR loop")
+            self._assert_invoice_found()
+            xml_bytes, pdf_bytes = self._download_all_files()
+            if xml_bytes is None and pdf_bytes is None:
+                raise InvoiceNotFoundException(
+                    f"VNPT: no downloadable files found for lookup code '{self.lookup_code}'"
+                )
+            return ScrapedResult(xml_bytes=xml_bytes, pdf_bytes=pdf_bytes)
+
         for attempt in range(_MAX_CAPTCHA_RETRIES):
             self._fill_lookup_code()
             solution = self._screenshot_and_solve_captcha()

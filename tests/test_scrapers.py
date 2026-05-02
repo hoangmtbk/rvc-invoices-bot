@@ -219,7 +219,8 @@ def test_vnpt_scrape_raises_after_max_captcha_retries():
 
     s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
 
-    with patch.object(s, "_fill_lookup_code"), \
+    with patch.object(s, "_probe_bypass", return_value=False), \
+         patch.object(s, "_fill_lookup_code"), \
          patch.object(s, "_screenshot_and_solve_captcha", return_value=""), \
          pytest.raises(CaptchaRequiredException, match="empty"):
         s.scrape()
@@ -232,7 +233,8 @@ def test_vnpt_scrape_raises_captcha_after_all_failed_submits():
 
     s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
 
-    with patch.object(s, "_fill_lookup_code"), \
+    with patch.object(s, "_probe_bypass", return_value=False), \
+         patch.object(s, "_fill_lookup_code"), \
          patch.object(s, "_screenshot_and_solve_captcha", return_value="1234"), \
          patch.object(s, "_enter_captcha"), \
          patch.object(s, "_submit_and_wait_for_results", return_value=False), \
