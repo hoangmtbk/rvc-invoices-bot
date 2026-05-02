@@ -365,3 +365,28 @@ def test_probe_bypass_returns_false_when_submit_fails():
          patch.object(s, "_enter_captcha"), \
          patch.object(s, "_submit_and_wait_for_results", return_value=False):
         assert s._probe_bypass() is False
+
+
+def test_scrape_bypass_path_returns_result_when_bypass_succeeds():
+    page = MagicMock()
+    page.goto = MagicMock()
+    page.mouse = MagicMock()
+    s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
+    xml_data = b"<?xml version='1.0'?><HDon/>"
+    with patch.object(s, "_probe_bypass", return_value=True), \
+         patch.object(s, "_assert_invoice_found"), \
+         patch.object(s, "_download_all_files", return_value=(xml_data, None)):
+        result = s.scrape()
+    assert result.xml_bytes == xml_data
+
+
+def test_scrape_bypass_path_raises_when_no_files_downloaded():
+    page = MagicMock()
+    page.goto = MagicMock()
+    page.mouse = MagicMock()
+    s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
+    with patch.object(s, "_probe_bypass", return_value=True), \
+         patch.object(s, "_assert_invoice_found"), \
+         patch.object(s, "_download_all_files", return_value=(None, None)), \
+         pytest.raises(InvoiceNotFoundException):
+        s.scrape()
