@@ -1,0 +1,538 @@
+---
+description: >
+  Step-by-step troubleshooting workflow for building and debugging a new
+  invoice scraper. Covers everything from email inspection to full end-to-end
+  validation, based on lessons learned from the Petrolimex scraper.
+---
+
+# New Scraper Troubleshoot Workflow
+
+Use this prompt when asked to **troubleshoot** or **add a new scraper** for a domain not yet in `scrapers/factory.py`.
+
+Inputs — the user provides **one** of:
+
+| Mode        | Required                                        |
+|-------------|--------------------------------------------------|
+| Email UID   | `uid=<number>` — an IMAP message UID in INBOX    |
+| Direct pair | `url=<url>` **and** `lookup_code=<code>`         |
+
+---
+
+## Phase 0 — Decide Input Mode
+
+```
+IF uid provided:
+    run Phase 1 (email inspection)
+ELSE IF url + lookup_code provided:
+    skip to Phase 2 (domain check)
+```
+
+---
+
+## Phase 1 — Inspect Email by UID
+
+**Goal:** verify the email contains a parseable lookup code and a known portal URL.
+
+```bash
+# Inside container (adjusts sys.path to /app automatically)
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/fetch_email_uid.py <uid>
+```
+
+Check the output:
+
+| Field | What to look for |
+|-------|-----------------|
+| `code = ...` | Must not be `None`. If `None` → fix `REGEX_PATTERNS` in `web_extraction_router.py` |
+| `best url` | Must resolve to the invoice portal. If `None` → fix `_pick_best_url` or add a URL pattern |
+| Attachments | Note filenames — XML/PDF may already be attached, bypassing the scraper entirely |
+
+**If the code has a trailing `*`** (e.g. `VF4S5TMTE*`), the regex capture group must include `\*?` **inside** the parentheses:
+```python
+re.compile(r"mã tra cứu.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE)
+```
+
+---
+
+## Phase 2 — Domain Registration
+
+Check whether the domain is already in `scrapers/factory.py`:
+
+```python
+# scrapers/factory.py → _get_registry()
+"hoadon.petrolimex.com.vn": PetrolimexScraper,
+```
+
+If missing, add it. Then create `scrapers/<newsite>.py` from the template in **Phase 3**.
+
+---
+
+## Phase 3 — Inspect the Portal Page (Playwright Codegen / Debug Script)
+
+Create `scripts/debug_<newsite>.py` following this template.  
+The script **must be run inside the container** because `playwright` and `.env` are only there.
+
+```python
+#!/usr/bin/env python3
+"""Diagnostic: inspect <newsite> invoice portal.
+
+Usage (inside container):
+    python /app/scripts/debug_<newsite>.py <lookup_code>
+"""
+import sys, os, time, re, tempfile
+sys.path.insert(0, "/app")
+from dotenv import load_dotenv; load_dotenv("/app/.env")
+
+from playwright.sync_api import sync_playwright
+from scrapers.browser import build_stealth_context
+from scrapers.base import capsolver_solve_image
+
+LOOKUP_CODE = sys.argv[1] if len(sys.argv) > 1 else "TESTCODE"
+URL = "https://<newsite-url>"
+SHOT_DIR = "/tmp/<newsite>_debug"
+os.makedirs(SHOT_DIR, exist_ok=True)
+
+def shot(page, name):
+    p = f"{SHOT_DIR}/{name}.png"
+    page.screenshot(path=p, full_page=True)
+    print(f"  [screenshot] {p}")
+
+def dump_elements(page, selector, label):
+    locs = page.locator(selector)
+    n = locs.count()
+    print(f"\n{label} ({selector}): {n} elements")
+    for i in range(n):
+        el = locs.nth(i)
+        tag  = el.evaluate("e => e.tagName").lower()
+        typ  = el.get_attribute("type") or ""
+        id_  = el.get_attribute("id") or ""
+        name_ = el.get_attribute("name") or ""
+        txt  = ""
+        try: txt = el.inner_text()[:60]
+        except: pass
+        visible = el.is_visible()
+        print(f"  [{i}] tag={tag!r} type={typ!r} id={id_!r} name={name_!r} text={txt!r} visible={visible}")
+
+with sync_playwright() as pw:
+    browser, context = build_stealth_context(pw)
+    page = context.new_page()
+    page.on("dialog", lambda d: d.dismiss())
+
+    # ── Step 1: Load page ────────────────────────────────────────────────
+    print(f"\n1) Navigating to {URL}")
+    page.goto(URL, wait_until="networkidle")
+    shot(page, "01_loaded")
+    print(f"   Title: {page.title()!r}")
+
+    # ── Step 2: Enumerate interactive elements ───────────────────────────
+    dump_elements(page, "input", "All inputs")
+    dump_elements(page, "button", "All buttons")
+    dump_elements(page, "img", "All images")
+    dump_elements(page, "a", "All links")
+    dump_elements(page, "form", "All forms")
+
+    # ── Step 3: Fill lookup code ─────────────────────────────────────────
+    # TODO: replace selector after inspection above
+    CODE_SEL = 'input[type="text"]'  # refine after Step 2
+    code_el = page.locator(CODE_SEL).first
+    code_el.wait_for(state="visible", timeout=10_000)
+    code_el.click(click_count=3)
+    code_el.press_sequentially(LOOKUP_CODE, delay=80)
+    shot(page, "02_code_filled")
+    print(f"\n3) Code field value: {code_el.input_value()!r}")
+
+    # ── Step 4: Solve CAPTCHA (if present) ───────────────────────────────
+    CAPTCHA_IMG_SEL = 'img[src*="captch" i], img[src*="Captcha" i]'
+    img_loc = page.locator(CAPTCHA_IMG_SEL)
+    if img_loc.count() > 0 and img_loc.first.is_visible():
+        time.sleep(1)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+            captcha_path = tf.name
+        img_loc.first.screenshot(path=captcha_path)
+        solution = re.sub(r"\s+", "", capsolver_solve_image(captcha_path) or "")
+        print(f"\n4) Captcha solution: {solution!r}")
+        os.unlink(captcha_path)
+
+        CAPTCHA_INPUT_SEL = 'input[id*="captch" i], input[name*="captch" i]'
+        captcha_el = page.locator(CAPTCHA_INPUT_SEL).first
+        captcha_el.click(click_count=3)
+        captcha_el.press_sequentially(solution, delay=100)
+        shot(page, "03_captcha_filled")
+    else:
+        solution = ""
+        print("\n4) No captcha found")
+
+    # ── Step 5: Identify submit button — CRITICAL ────────────────────────
+    # WARNING: tab-style <button> elements without type="submit" appear in DOM
+    # BEFORE the real submit — always use input[type="submit"] first, never
+    # bare 'button' selectors.
+    SUBMIT_CANDIDATES = [
+        'input[type="submit"]',
+        'input[name="submit"]',
+        'button[type="submit"]',
+        # NEVER add bare 'button' here — it matches tab/navigation buttons
+    ]
+    print("\n5) Submit candidates:")
+    for sel in SUBMIT_CANDIDATES:
+        loc = page.locator(sel)
+        n = loc.count()
+        print(f"   {sel!r}: {n} elements")
+        for i in range(n):
+            el = loc.nth(i)
+            tag = el.evaluate("e => e.tagName").lower()
+            print(f"     [{i}] tag={tag!r} type={el.get_attribute('type')!r} id={el.get_attribute('id')!r} visible={el.is_visible()}")
+
+    # ── Step 6: Click submit ─────────────────────────────────────────────
+    SUBMIT_SEL = (
+        'input[type="submit"], '
+        'input[name="submit"], '
+        'button[type="submit"]'
+    )
+    btn = page.locator(SUBMIT_SEL).first
+    btn.wait_for(state="visible", timeout=15_000)
+    btn.hover()
+    time.sleep(0.5)
+    btn.click()
+    shot(page, "04_clicked_submit")
+
+    # ── Step 7: Wait and inspect result ─────────────────────────────────
+    try:
+        page.locator('a:has-text("Tải"), a:has-text("Download"), a[href*=".xml"], a[href*=".pdf"]').first.wait_for(state="visible", timeout=20_000)
+    except Exception:
+        time.sleep(6)
+    shot(page, "05_after_submit")
+
+    body = page.evaluate("() => document.body.innerText")
+    print(f"\n7) Body after submit (500 chars):\n{body[:500]}")
+
+    # Enumerate download links
+    dump_elements(page, 'a[href*=".xml"], a[href*=".pdf"], a:has-text("Tải"), a:has-text("Download")', "Download links")
+
+    browser.close()
+
+print(f"\nDone. Screenshots in {SHOT_DIR}/")
+```
+
+**Run it:**
+```bash
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/debug_<newsite>.py <lookup_code>
+```
+
+**Copy screenshots out** (optional):
+```bash
+docker compose cp rvc-invoices-bot:/tmp/<newsite>_debug ./debug_shots/
+```
+
+---
+
+## Phase 4 — Identify Selectors
+
+From the debug output, fill in this selector checklist:
+
+| Selector variable       | What to confirm                                                        |
+|-------------------------|------------------------------------------------------------------------|
+| `_CODE_SEL`             | Matches exactly the lookup code `<input>` — check `id`, `name`        |
+| `_CAPTCHA_IMG_SEL`      | Matches the captcha `<img>` — check `src` pattern                     |
+| `_CAPTCHA_INPUT_SEL`    | Matches the captcha text `<input>` — check `id` (e.g. `#captch` not `#captcha`) |
+| `_SUBMIT_SEL`           | **Must be `input[type="submit"]` first**. Check `tag=INPUT` not `BUTTON` |
+| `_DOWNLOAD_LINK_SEL`    | Matches all file download `<a>` links after result loads               |
+
+**Submit selector pitfall (Petrolimex lesson):**
+The page may have `<button>` elements (tabs, navigation) that appear in DOM order **before** the real submit. A selector like `button` or `#form button` will match them first and do nothing. Always prefer:
+```python
+_SUBMIT_SEL = (
+    '#MyForm input[type="submit"], '
+    '#MyForm input[name="submit"], '
+    '#MyForm button[type="submit"], '
+    'input[type="submit"]'            # global fallback
+)
+```
+
+---
+
+## Phase 5 — Write the Scraper Class
+
+Create `scrapers/<newsite>.py`:
+
+```python
+import logging, os, re, time, random, tempfile
+from .base import BaseInvoiceScraper, capsolver_solve_image
+from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
+from .result import ScrapedResult
+
+logger = logging.getLogger(__name__)
+
+# --- Fill in selectors from Phase 4 ---
+_CODE_SEL          = '...'
+_CAPTCHA_IMG_SEL   = '...'
+_CAPTCHA_INPUT_SEL = '...'
+_SUBMIT_SEL        = (
+    '... input[type="submit"], '
+    '... input[name="submit"], '
+    '... button[type="submit"], '
+    'input[type="submit"]'
+)
+_DOWNLOAD_LINK_SEL = '...'
+_MAX_RETRIES       = 3
+
+
+class <NewSite>Scraper(BaseInvoiceScraper):
+    def scrape(self) -> ScrapedResult:
+        self._setup_dialogs()
+        self.page.goto(self.url, wait_until="networkidle")
+        self._scroll()
+
+        for attempt in range(_MAX_RETRIES):
+            self._enter_code()
+            solution = self._screenshot_and_solve_captcha()
+
+            # Validate captcha format (adjust regex for this site)
+            if not solution or not re.fullmatch(r"[0-9]{4,6}", solution):
+                logger.warning("Invalid captcha '%s' on attempt %d", solution, attempt + 1)
+                if attempt < _MAX_RETRIES - 1:
+                    self.page.reload(wait_until="networkidle")
+                continue
+
+            logger.info("Attempt %d/%d: captcha='%s'", attempt + 1, _MAX_RETRIES, solution)
+            self._enter_captcha(solution)
+            self._click_submit()
+
+            body = self.page.evaluate("() => document.body.innerText").lower()
+            # Adjust "not found" keywords for this site's language
+            if "không tìm thấy" in body or "không có hóa đơn" in body:
+                raise InvoiceNotFoundException(
+                    f"<NewSite>: invoice not found for '{self.lookup_code}'"
+                )
+            if self._downloads_visible():
+                break
+
+            logger.warning(
+                "<NewSite>: no downloads after attempt %d — body: %s",
+                attempt + 1, body[:300],
+            )
+            if attempt < _MAX_RETRIES - 1:
+                self.page.reload(wait_until="networkidle")
+        else:
+            raise CaptchaRequiredException(
+                f"<NewSite>: captcha failed after {_MAX_RETRIES} attempts"
+            )
+
+        xml_bytes, pdf_bytes = self._download_all()
+        logger.info(
+            "<NewSite>: xml=%s pdf=%s",
+            f"{len(xml_bytes)}B" if xml_bytes else "none",
+            f"{len(pdf_bytes)}B" if pdf_bytes else "none",
+        )
+        return ScrapedResult(xml_bytes=xml_bytes, pdf_bytes=pdf_bytes)
+
+    def _enter_code(self) -> None:
+        el = self.page.locator(_CODE_SEL).first
+        el.wait_for(state="visible", timeout=10_000)
+        el.click(click_count=3)
+        self._delay(0.1, 0.2)
+        el.press_sequentially(self.lookup_code, delay=100)
+        self._delay(0.2, 0.5)
+
+    def _screenshot_and_solve_captcha(self) -> str:
+        img_loc = self.page.locator(_CAPTCHA_IMG_SEL)
+        if img_loc.count() == 0 or not img_loc.first.is_visible():
+            return ""
+        self._delay(0.5, 1.0)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+            captcha_path = tf.name
+        try:
+            img_loc.first.screenshot(path=captcha_path)
+            result = capsolver_solve_image(captcha_path) or ""
+            result = re.sub(r"\s+", "", result)
+            logger.info("<NewSite>: captcha = '%s'", result)
+            return result
+        finally:
+            os.unlink(captcha_path)
+
+    def _enter_captcha(self, solution: str) -> None:
+        el = self.page.locator(_CAPTCHA_INPUT_SEL).first
+        el.wait_for(state="visible", timeout=10_000)
+        el.click(click_count=3)
+        self._delay(0.1, 0.2)
+        el.press_sequentially(solution, delay=random.randint(80, 150))
+        self._delay(0.2, 0.5)
+
+    def _click_submit(self) -> None:
+        btn = self.page.locator(_SUBMIT_SEL).first
+        btn.wait_for(state="visible", timeout=15_000)
+        btn.hover()
+        self._delay(0.3, 0.8)
+        btn.click()
+        # Wait actively for results; fall back to fixed sleep
+        try:
+            self.page.locator(_DOWNLOAD_LINK_SEL).first.wait_for(state="visible", timeout=20_000)
+        except Exception:
+            time.sleep(6)
+
+    def _downloads_visible(self) -> bool:
+        return self.page.locator(_DOWNLOAD_LINK_SEL).count() > 0
+
+    def _download_all(self) -> tuple[bytes | None, bytes | None]:
+        xml_bytes: bytes | None = None
+        pdf_bytes: bytes | None = None
+        links = self.page.locator(_DOWNLOAD_LINK_SEL)
+        for i in range(links.count()):
+            try:
+                with self.page.expect_download(timeout=15_000) as dl:
+                    links.nth(i).hover()
+                    self._delay(0.2, 0.5)
+                    links.nth(i).click()
+                path = dl.value.path()
+                with open(path, "rb") as f:
+                    data = f.read()
+                ctype = self._classify_bytes(data)
+                if ctype == "xml" and xml_bytes is None:
+                    xml_bytes = data
+                elif ctype == "pdf" and pdf_bytes is None:
+                    pdf_bytes = data
+                else:
+                    logger.debug("<NewSite>: link[%d] unrecognised type '%s'", i, ctype)
+            except Exception as exc:
+                logger.debug("<NewSite>: link[%d] download failed: %s", i, exc)
+        return xml_bytes, pdf_bytes
+```
+
+---
+
+## Phase 6 — Register the Scraper
+
+In `scrapers/factory.py`, add one line inside `_get_registry()`:
+
+```python
+from .<newsite> import <NewSite>Scraper
+
+"<newsite-domain.vn>": <NewSite>Scraper,
+```
+
+---
+
+## Phase 7 — Unit Tests
+
+Add tests to `tests/test_scrapers.py`. Minimum set:
+
+```python
+def test_<newsite>_scraper_instantiation(mock_page):
+    s = <NewSite>Scraper(mock_page, "https://<domain>/", "CODE123")
+    assert s.lookup_code == "CODE123"
+
+def test_<newsite>_scrape_success(mock_page):
+    with patch("scrapers.<newsite>.capsolver_solve_image", return_value="1234"), \
+         patch.object(<NewSite>Scraper, "_downloads_visible", side_effect=[False, True]), \
+         patch.object(<NewSite>Scraper, "_download_all", return_value=(b"<?xml", b"%PDF")):
+        s = <NewSite>Scraper(mock_page, "https://<domain>/", "CODE123")
+        result = s.scrape()
+    assert result.xml_bytes == b"<?xml"
+    assert result.pdf_bytes == b"%PDF"
+
+def test_<newsite>_scrape_invalid_captcha_retries(mock_page):
+    with patch("scrapers.<newsite>.capsolver_solve_image", return_value="bad"):
+        s = <NewSite>Scraper(mock_page, "https://<domain>/", "CODE123")
+        with pytest.raises(CaptchaRequiredException):
+            s.scrape()
+```
+
+Run:
+```bash
+docker compose exec -T rvc-invoices-bot pytest tests/test_scrapers.py -v -k <newsite>
+```
+
+---
+
+## Phase 8 — End-to-End Test
+
+### Mode A — From email UID
+
+```bash
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/e2e_petrolimex.py <uid>
+```
+
+> Reuse `e2e_petrolimex.py` as-is — it calls `scrape_invoice(url, code)` which goes
+> through `ScraperFactory`, so it will pick up any registered scraper.
+
+### Mode B — Direct URL + code (no email)
+
+```python
+#!/usr/bin/env python3
+"""Quick E2E without email: test scraper directly with url + lookup_code."""
+import sys, os, tempfile, logging
+sys.path.insert(0, "/app")
+from dotenv import load_dotenv; load_dotenv("/app/.env")
+
+logging.basicConfig(level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+logger = logging.getLogger("e2e_direct")
+
+URL = sys.argv[1]          # e.g. "https://<domain>/invoice"
+CODE = sys.argv[2]         # e.g. "ABC123"
+
+from scrapers import scrape_invoice
+with tempfile.TemporaryDirectory() as tmpdir:
+    result = scrape_invoice(URL, CODE, download_dir=tmpdir)
+    logger.info("xml=%s pdf=%s",
+        f"{len(result.xml_bytes)}B" if result.xml_bytes else "none",
+        f"{len(result.pdf_bytes)}B" if result.pdf_bytes else "none")
+    assert result.xml_bytes or result.pdf_bytes, "No files downloaded"
+    logger.info("SUCCESS")
+```
+
+```bash
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/e2e_direct.py "https://<domain>/" "CODE123"
+```
+
+**Expected success output:**
+```
+INFO | e2e_direct | xml=6718B pdf=418416B
+INFO | e2e_direct | SUCCESS
+```
+
+---
+
+## Phase 9 — Save to Database (Full Router Flow)
+
+Run the full router flow (parses XML, saves invoice record):
+
+```bash
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/e2e_petrolimex.py <uid>
+```
+
+Expected final line:
+```
+INFO | e2e | SUCCESS — invoice saved to database
+```
+
+---
+
+## Checklist
+
+- [ ] `fetch_email_uid.py <uid>` → code and URL extracted correctly
+- [ ] Domain added to `scrapers/factory.py`
+- [ ] `debug_<newsite>.py` run — all selectors verified in output
+- [ ] `_SUBMIT_SEL` confirmed to match `tag=INPUT type="submit"` (not `BUTTON`)
+- [ ] Scraper class created in `scrapers/<newsite>.py`
+- [ ] `pytest -k <newsite>` — all tests pass
+- [ ] E2E script downloads XML + PDF
+- [ ] Router saves invoice to DB
+
+---
+
+## Known Pitfalls (from Petrolimex debugging)
+
+| Pitfall | Symptom | Fix |
+|---------|---------|-----|
+| Capsolver `ImageToTextTask` is synchronous | Solution returned in `createTask` response — `solution.text` is empty string if you poll `getTaskResult` without checking `createTask` first | Check `create_resp["status"] == "ready"` before polling |
+| DOM-order button trap | Selector `button` matches a tab/nav button before the real submit; click does nothing; no downloads appear | Use `input[type="submit"]` first; confirm `tag=INPUT` in debug output |
+| Captcha input ID typo | Form has `id="captch"` not `id="captcha"` | Always dump all inputs in Phase 3 and verify `id` |
+| Lookup code asterisk stripped | Regex `([A-Z0-9]+)\*?` strips `*` — code `VF4S5TMTE*` becomes `VF4S5TMTE` | Move `\*?` inside group: `([A-Z0-9]+\*?)` |
+| False positive "captcha wrong" detection | Body text contains captcha label text even on first load | Never check body text for captcha-error keywords; only check for "invoice not found" |
+| `_MAX_RETRIES` set to 1 by mistake | Scraper gives up after first failed captcha | Always set `_MAX_RETRIES = 3` |
+| `triple_click()` removed in Playwright 1.59 | `AttributeError: triple_click` | Use `click(click_count=3)` |
+| `wait_until="networkidle"` too strict | Timeout on pages with background polling | Use `"domcontentloaded"` for initial load + explicit `wait_for(state="visible")` on key elements |
