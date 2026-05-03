@@ -21,15 +21,12 @@ _CAPTCHA_IMG_SEL = (
     'img[src*="captch" i]'
 )
 _CAPTCHA_INPUT_SEL = '#SearchformByfkey #captch'
-# Submit — try form-scoped first, then broad fallbacks (input or button)
+# Submit — the form uses <input type="submit" name="submit">, not a <button>
 _SUBMIT_SEL = (
-    '#SearchformByfkey button[type="submit"], '
     '#SearchformByfkey input[type="submit"], '
-    '#SearchformByfkey button, '
-    'button:has-text("Tìm"), '
-    'button:has-text("Tra cứu"), '
-    'input[type="submit"], '
-    'button[type="submit"]'
+    '#SearchformByfkey input[name="submit"], '
+    '#SearchformByfkey button[type="submit"], '
+    'input[type="submit"]'
 )
 # Both files are labelled "Tải" — classify by content after download
 _DOWNLOAD_LINK_SEL = 'a:has-text("Tải")'
