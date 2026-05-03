@@ -125,9 +125,15 @@ def test_multiple_pairs_multiple_invoice_calls(tmp_path):
 
 
 def test_web_branch_xml_path(tmp_path):
+    from scrapers.result import ScrapedResult
+
+    xml_file = tmp_path / "invoice_005.xml"
+    xml_file.write_bytes(b"<HDon/>")
+    mock_result = ScrapedResult(xml_bytes=b"<HDon/>", xml_path=str(xml_file))
+
     email = _make_email(text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu")
 
-    with patch("router.web_extraction_router.process_branch_4", return_value=(b"<HDon/>", "xml")), \
+    with patch("router.web_extraction_router.process_branch_web", return_value=mock_result), \
          patch("router.data_extractor.parse_xml", return_value={"invoice_number": "005", "seller_tax_code": "TAX"}) as mock_parse, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
@@ -139,13 +145,19 @@ def test_web_branch_xml_path(tmp_path):
 
     mock_parse.assert_called_once_with(b"<HDon/>")
     stored = mock_store.call_args[0][0]
-    assert stored["source_branch"] == "WEB"
+    assert stored["source_branch"] == "XML"
 
 
 def test_web_branch_pdf_path(tmp_path):
+    from scrapers.result import ScrapedResult
+
+    pdf_file = tmp_path / "invoice_006.pdf"
+    pdf_file.write_bytes(b"%PDF")
+    mock_result = ScrapedResult(pdf_bytes=b"%PDF", pdf_path=str(pdf_file))
+
     email = _make_email(text="mã tra cứu: ABC123\nhttps://www.meinvoice.vn/tra-cuu")
 
-    with patch("router.web_extraction_router.process_branch_4", return_value=(b"%PDF", "pdf")), \
+    with patch("router.web_extraction_router.process_branch_web", return_value=mock_result), \
          patch("router.data_extractor.parse_pdf_via_gemini", return_value={"invoice_number": "006", "seller_tax_code": "TAX"}) as mock_gemini, \
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
@@ -157,7 +169,7 @@ def test_web_branch_pdf_path(tmp_path):
 
     mock_gemini.assert_called_once_with(b"%PDF")
     stored = mock_store.call_args[0][0]
-    assert stored["source_branch"] == "WEB"
+    assert stored["source_branch"] == "PDF"
 
 
 def test_error_sends_alert_and_logs_error(tmp_path):
@@ -195,3 +207,33 @@ def test_mark_as_seen_always_called_even_on_error(tmp_path):
         process_email(email)
 
     mock_seen.assert_called_once_with("99")
+
+
+def test_process_email_web_branch_calls_process_pair(tmp_path, monkeypatch):
+    import router
+    from scrapers.result import ScrapedResult
+
+    xml_file = tmp_path / "web_CODE.xml"
+    xml_file.write_bytes(b"<xml/>")
+    mock_result = ScrapedResult(
+        xml_bytes=b"<xml/>",
+        xml_path=str(xml_file),
+    )
+
+    email = _make_email(
+        uid="uid001",
+        subject="Invoice",
+        text="Mã tra cứu: CODE",
+        html='<a href="https://0102362584001hd.easyinvoice.com.vn/Search/Index">link</a>',
+    )
+
+    with patch("router.web_extraction_router.process_branch_web", return_value=mock_result), \
+         patch("router._process_pair") as mock_pair, \
+         patch("router.shutil.rmtree"), \
+         patch("router.email_handler.mark_as_seen"), \
+         patch("router.TEMP_DIR", str(tmp_path)):
+        router.process_email(email)
+
+    mock_pair.assert_called_once()
+    call_args = mock_pair.call_args[0]
+    assert call_args[0].get("xml") == str(xml_file)

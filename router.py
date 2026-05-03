@@ -131,48 +131,28 @@ def process_email(email) -> None:
             branch = "ATTACH"
             had_zip = _dump_and_extract(email, uid_temp)
             pairs = _collect_pairs(uid_temp)
-            if not pairs:
-                raise ValueError("No XML/PDF/HTML files found in attachments or ZIPs")
-            for pair in pairs:
-                _process_pair(pair, email, had_zip)
+            if pairs:
+                for pair in pairs:
+                    _process_pair(pair, email, had_zip)
+                return
 
-        else:
-            branch = "WEB"
-            logger.info(f"Branch WEB | uid={email.uid} | subject='{subject}'")
-            result = web_extraction_router.process_branch_4(email)
-            if result is None:
-                raise ValueError("All extraction tiers failed — no XML or PDF retrieved")
-            file_bytes, content_type = result
-            date_str = datetime.now().strftime("%Y%m%d")
+            logger.info(f"No invoice files in attachments — falling through to WEB | uid={email.uid}")
 
-            if content_type == "xml":
-                data = data_extractor.parse_xml(file_bytes)
-                inv_num = str(data.get("invoice_number") or "unknown")
-                tax_code = str(data.get("seller_tax_code") or "unknown")
-                xml_link = file_storage.upload_file(
-                    file_bytes,
-                    file_storage.build_filename(tax_code, inv_num, date_str, "xml"),
-                    "application/xml",
-                )
-                pdf_link = ""
-            else:
-                data = data_extractor.parse_pdf_via_gemini(file_bytes)
-                inv_num = str(data.get("invoice_number") or "unknown")
-                tax_code = str(data.get("seller_tax_code") or "unknown")
-                pdf_link = file_storage.upload_file(
-                    file_bytes,
-                    file_storage.build_filename(tax_code, inv_num, date_str, "pdf"),
-                    "application/pdf",
-                )
-                xml_link = ""
+        branch = "WEB"
+        logger.info(f"Branch WEB | uid={email.uid} | subject='{subject}'")
+        os.makedirs(uid_temp, exist_ok=True)
+        result = web_extraction_router.process_branch_web(email, uid_temp)
+        if result is None:
+            raise ValueError("All extraction tiers failed — no XML or PDF retrieved")
 
-            data["xml_file_link"] = xml_link
-            data["pdf_file_link"] = pdf_link
-            data["processed_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            data["source_branch"] = "WEB"
-            data["source_email_subject"] = subject
-            storage.append_invoice(data)
-            logger.info(f"Invoice saved | branch=WEB | number={data.get('invoice_number')}")
+        pair = {"stem": f"web_{email.uid}"}
+        if result.xml_path:
+            pair["xml"] = result.xml_path
+        if result.pdf_path:
+            pair["pdf"] = result.pdf_path
+        if "xml" not in pair and "pdf" not in pair:
+            raise ValueError("ScrapedResult has no file paths")
+        _process_pair(pair, email, had_zip=False)
 
     except Exception as e:
         logger.error(
