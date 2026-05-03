@@ -47,12 +47,22 @@ def capsolver_solve_image(image_path: str) -> str | None:
             timeout=15,
         ).json()
     except Exception as exc:
-        _logger.debug("Capsolver: createTask request failed: %s", exc)
+        _logger.warning("Capsolver: createTask request failed: %s", exc)
         return None
+
+    if create_resp.get("errorId", 0) != 0:
+        _logger.warning("Capsolver: createTask error: %s", create_resp)
+        return None
+
+    # ImageToTextTask is synchronous — solution may already be present in createTask response
+    if create_resp.get("status") == "ready":
+        text = create_resp.get("solution", {}).get("text", "")
+        _logger.info("Capsolver: solved inline, text=%r", text)
+        return text
 
     task_id = create_resp.get("taskId")
     if not task_id:
-        _logger.debug("Capsolver: createTask returned no taskId: %s", create_resp)
+        _logger.warning("Capsolver: createTask returned no taskId: %s", create_resp)
         return None
 
     for _ in range(10):
@@ -64,12 +74,18 @@ def capsolver_solve_image(image_path: str) -> str | None:
                 timeout=10,
             ).json()
         except Exception as exc:
-            _logger.debug("Capsolver: getTaskResult request failed: %s", exc)
+            _logger.warning("Capsolver: getTaskResult request failed: %s", exc)
             return None
-        if result_resp.get("status") == "ready":
-            return result_resp.get("solution", {}).get("text", "")
+        status = result_resp.get("status")
+        if status == "ready":
+            text = result_resp.get("solution", {}).get("text", "")
+            _logger.info("Capsolver: polled result, text=%r", text)
+            return text
+        if status not in ("processing", "idle", None):
+            _logger.warning("Capsolver: unexpected status %r: %s", status, result_resp)
+            return None
 
-    _logger.debug("Capsolver: timed out waiting for task %s", task_id)
+    _logger.warning("Capsolver: timed out waiting for task %s", task_id)
     return None
 
 _CAPTCHA_IMG = (
