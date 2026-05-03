@@ -274,14 +274,14 @@ class VnptScraper(BaseInvoiceScraper):
     # ── captcha solving ─────────────────────────────────────────────────────
 
     def _screenshot_and_solve_captcha(self) -> str:
-        img_loc = self.page.locator(_CAPTCHA_IMG).first
-        if img_loc.count() == 0 or not img_loc.is_visible():
+        img_loc = self.page.locator(_CAPTCHA_IMG)
+        if img_loc.count() == 0 or not img_loc.first.is_visible():
             return ""
         self._delay(0.5, 1.0)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
             captcha_path = tf.name
         try:
-            img_loc.screenshot(path=captcha_path)
+            img_loc.first.screenshot(path=captcha_path)
             result = capsolver_solve_image(captcha_path) or ""
             result = re.sub(r"\s+", "", result)
             logger.info("VNPT: Capsolver captcha result = '%s'", result)

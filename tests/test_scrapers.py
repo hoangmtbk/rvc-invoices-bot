@@ -37,49 +37,6 @@ class _ConcreteScaper(BaseInvoiceScraper):
         return ScrapedResult(xml_bytes=b"<xml/>")
 
 
-def test_handle_captcha_no_op_when_no_image():
-    page = MagicMock()
-    img_loc = MagicMock()
-    img_loc.count.return_value = 0
-    page.locator.return_value = img_loc
-
-    scraper = _ConcreteScaper(page, "https://example.com", "CODE")
-    scraper._handle_captcha_if_present()  # must not raise
-
-
-def test_handle_captcha_no_op_when_image_not_visible():
-    page = MagicMock()
-    img_loc = MagicMock()
-    img_loc.count.return_value = 1
-    img_loc.first.is_visible.return_value = False
-    page.locator.return_value = img_loc
-
-    scraper = _ConcreteScaper(page, "https://example.com", "CODE")
-    scraper._handle_captcha_if_present()  # must not raise
-
-
-def test_handle_captcha_raises_when_gemini_returns_empty():
-    page = MagicMock()
-    img_loc = MagicMock()
-    img_loc.count.return_value = 1
-    img_loc.first.is_visible.return_value = True
-    inp_loc = MagicMock()
-    inp_loc.count.return_value = 1
-
-    def locator_side_effect(sel):
-        if "input" not in sel.lower():
-            return img_loc
-        return inp_loc
-
-    page.locator.side_effect = locator_side_effect
-
-    scraper = _ConcreteScaper(page, "https://example.com", "CODE")
-    with patch.object(scraper, "_solve_captcha", return_value=""):
-        with patch("tempfile.NamedTemporaryFile"):
-            with patch("os.unlink"):
-                with pytest.raises(CaptchaRequiredException):
-                    scraper._handle_captcha_if_present()
-
 
 from scrapers.factory import ScraperFactory
 from scrapers.exceptions import ScraperNotSupportedException

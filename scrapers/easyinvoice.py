@@ -1,14 +1,24 @@
 import io
 import logging
+import os
+import random
+import re
+import tempfile
 import zipfile
 
-from .base import BaseInvoiceScraper
+from .base import BaseInvoiceScraper, capsolver_solve_image
 from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
 from .result import ScrapedResult
 
 logger = logging.getLogger(__name__)
 
 _CODE_SEL = "input#Code, input[placeholder*='Mã tra cứu'], input[placeholder*='mã tra cứu' i]"
+_CAPTCHA_IMG_SEL = (
+    'img[src*="captcha" i], img[id*="captcha" i], img[class*="captcha" i]'
+)
+_CAPTCHA_INPUT_SEL = (
+    'input[id*="captcha" i], input[placeholder*="xác thực" i]'
+)
 _SUBMIT_SEL = "button:has-text('Tra cứu'), button.btn-success, button#btnSearch"
 
 _XML_SELS = (
@@ -22,7 +32,7 @@ _PDF_SELS = (
 )
 
 _ERROR_TEXTS = ("Mã xác thực không đúng", "Không tìm thấy")
-_MAX_RETRIES = 2
+_MAX_RETRIES = 3
 
 
 class EasyInvoiceScraper(BaseInvoiceScraper):
@@ -70,7 +80,9 @@ class EasyInvoiceScraper(BaseInvoiceScraper):
     def _search_with_retry(self) -> None:
         for attempt in range(_MAX_RETRIES):
             self._enter_code()
-            self._handle_captcha_if_present()
+            solution = self._screenshot_and_solve_captcha()
+            if solution:
+                self._enter_captcha(solution)
             self._click(_SUBMIT_SEL)
             self._delay(2.0, 3.5)
 
@@ -80,12 +92,12 @@ class EasyInvoiceScraper(BaseInvoiceScraper):
                         raise InvoiceNotFoundException(
                             f"EasyInvoice: invoice not found for '{self.lookup_code}'"
                         )
-                    # "Mã xác thực không đúng" — retry if attempts remain
+                    # "Mã xác thực không đúng" — reload and retry if attempts remain
                     if attempt < _MAX_RETRIES - 1:
                         logger.warning(
-                            "EasyInvoice: '%s' on attempt %d, retrying", err_text, attempt + 1
+                            "EasyInvoice: '%s' on attempt %d, reloading", err_text, attempt + 1
                         )
-                        self._delay(1.5, 2.0)
+                        self.page.reload(wait_until="networkidle")
                         break
                     raise CaptchaRequiredException(
                         f"EasyInvoice: {err_text} after {_MAX_RETRIES} attempts"
@@ -99,6 +111,30 @@ class EasyInvoiceScraper(BaseInvoiceScraper):
         el.click(click_count=3)
         self._delay(0.1, 0.2)
         el.press_sequentially(self.lookup_code, delay=100)
+        self._delay(0.2, 0.5)
+
+    def _screenshot_and_solve_captcha(self) -> str:
+        img_loc = self.page.locator(_CAPTCHA_IMG_SEL)
+        if img_loc.count() == 0 or not img_loc.first.is_visible():
+            return ""
+        self._delay(0.5, 1.0)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+            captcha_path = tf.name
+        try:
+            img_loc.first.screenshot(path=captcha_path)
+            result = capsolver_solve_image(captcha_path) or ""
+            result = re.sub(r"\s+", "", result)
+            logger.info("EasyInvoice: Capsolver captcha result = '%s'", result)
+            return result
+        finally:
+            os.unlink(captcha_path)
+
+    def _enter_captcha(self, solution: str) -> None:
+        el = self.page.locator(_CAPTCHA_INPUT_SEL).first
+        el.wait_for(state="visible", timeout=10_000)
+        el.click(click_count=3)
+        self._delay(0.1, 0.2)
+        el.press_sequentially(solution, delay=random.randint(80, 150))
         self._delay(0.2, 0.5)
 
 
