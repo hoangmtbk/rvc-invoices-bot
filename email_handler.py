@@ -6,7 +6,7 @@ from config import IMAP_PASSWORD, IMAP_PORT, IMAP_SERVER, IMAP_USER
 
 logger = logging.getLogger(__name__)
 
-SUBJECT_KEYWORDS = ["hóa đơn điện tử", "hóa đơn", "hddt", "hdđt"]
+SUBJECT_KEYWORDS = ["hóa đơn điện tử", "hóa đơn", "hddt", "hdđt", "thông báo phát hành"]
 
 
 def fetch_unseen_emails() -> list:
