@@ -4,11 +4,7 @@ import random
 import re
 import tempfile
 
-import PIL.Image
-import PIL.ImageEnhance
-import PIL.ImageFilter
-
-from .base import BaseInvoiceScraper, _get_gemini_client, capsolver_solve_image
+from .base import BaseInvoiceScraper, capsolver_solve_image
 from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
 from .result import ScrapedResult
 
@@ -100,7 +96,10 @@ class PetrolimexScraper(BaseInvoiceScraper):
             captcha_path = tf.name
         try:
             img_loc.first.screenshot(path=captcha_path)
-            return _solve_petrolimex_captcha(captcha_path)
+            result = capsolver_solve_image(captcha_path) or ""
+            result = re.sub(r"\s+", "", result)
+            logger.info("Petrolimex: Capsolver captcha result = '%s'", result)
+            return result
         finally:
             os.unlink(captcha_path)
 
@@ -156,49 +155,3 @@ class PetrolimexScraper(BaseInvoiceScraper):
         return xml_bytes, pdf_bytes
 
 
-def _solve_petrolimex_captcha(image_path: str) -> str:
-    """Solve 4-digit numeric captcha: ddddocr → Capsolver (if key set) → Gemini."""
-    # Solver 1: ddddocr
-    try:
-        import ddddocr
-        ocr = ddddocr.DdddOcr(show_ad=False)
-        with open(image_path, "rb") as f:
-            raw = re.sub(r"\s+", "", ocr.classification(f.read()))
-        if re.fullmatch(r"[0-9]{4}", raw):
-            logger.info("Petrolimex: ddddocr captcha = '%s'", raw)
-            return raw
-        logger.debug("Petrolimex: ddddocr returned '%s', trying next solver", raw)
-    except Exception as exc:
-        logger.debug("Petrolimex: ddddocr failed: %s", exc)
-
-    # Solver 2: Capsolver (only when CAPSOLVER_API_KEY env var is set)
-    if os.environ.get("CAPSOLVER_API_KEY"):
-        try:
-            cap_result = capsolver_solve_image(image_path)
-            if cap_result:
-                stripped = re.sub(r"\s+", "", cap_result)
-                if re.fullmatch(r"[0-9]{4}", stripped):
-                    logger.info("Petrolimex: Capsolver captcha = '%s'", stripped)
-                    return stripped
-            logger.debug("Petrolimex: Capsolver returned '%s', falling back to Gemini", cap_result)
-        except Exception as exc:
-            logger.debug("Petrolimex: Capsolver failed: %s", exc)
-
-    # Solver 3: Gemini with Pillow preprocessing
-    img = PIL.Image.open(image_path).convert("L")
-    w, h = img.size
-    img = img.resize((w * 4, h * 4), PIL.Image.LANCZOS)
-    img = img.filter(PIL.ImageFilter.SHARPEN)
-    img = PIL.ImageEnhance.Contrast(img).enhance(2.5)
-    img = img.convert("RGB")
-    response = _get_gemini_client().models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[
-            "This is a captcha image showing exactly 4 digits (0–9 only). "
-            "Return ONLY the 4-digit sequence with no spaces or explanation.",
-            img,
-        ],
-    )
-    raw = response.text.strip()
-    logger.info("Petrolimex: Gemini raw captcha response = '%s'", raw)
-    return re.sub(r"\s+", "", raw)
