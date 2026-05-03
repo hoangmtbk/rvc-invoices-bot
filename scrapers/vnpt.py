@@ -1,16 +1,14 @@
-import base64
 import logging
 import os
 import random
 import re
 import tempfile
-import time
 
 import PIL.Image
 import PIL.ImageEnhance
 import PIL.ImageFilter
 
-from .base import BaseInvoiceScraper, _get_gemini_client
+from .base import BaseInvoiceScraper, _get_gemini_client, capsolver_solve_image
 from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
 from .result import ScrapedResult
 
@@ -359,7 +357,7 @@ def _solve_vnpt_captcha(image_path: str) -> str:
     # Solver 2: Capsolver (only when CAPSOLVER_API_KEY env var is set)
     if os.environ.get("CAPSOLVER_API_KEY"):
         try:
-            cap_result = _capsolver_solve(image_path)
+            cap_result = capsolver_solve_image(image_path)
             if cap_result:
                 stripped = re.sub(r"\s+", "", cap_result)
                 if re.fullmatch(r"[0-9]{4}", stripped):

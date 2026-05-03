@@ -463,7 +463,7 @@ def test_solve_captcha_uses_capsolver_when_key_set_and_ddddocr_fails(tmp_path):
 
     with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
          patch.dict("os.environ", {"CAPSOLVER_API_KEY": "test-key"}), \
-         patch("scrapers.vnpt._capsolver_solve", return_value="4321") as mock_cap, \
+         patch("scrapers.vnpt.capsolver_solve_image", return_value="4321") as mock_cap, \
          patch("scrapers.vnpt._get_gemini_client") as mock_gc:
         result = _solve_vnpt_captcha(img_path)
 
