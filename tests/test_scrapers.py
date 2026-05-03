@@ -439,3 +439,165 @@ def test_vnpt_scrape_skips_submit_when_solution_is_not_4_digits():
     mock_submit.assert_not_called()
     # refresh called on first 2 failures (not on last attempt)
     assert mock_refresh.call_count == 2
+
+
+# ── Petrolimex scraper unit tests ────────────────────────────────────────────
+
+from scrapers.petrolimex import PetrolimexScraper
+
+
+def _make_petrolimex_page():
+    """Return a MagicMock page with sensible defaults for Petrolimex tests."""
+    page = MagicMock()
+    page.goto = MagicMock()
+    page.mouse = MagicMock()
+    # locator(...).first returns a visible element by default
+    loc = MagicMock()
+    loc.count.return_value = 1
+    loc.first.is_visible.return_value = True
+    page.locator.return_value = loc
+    page.evaluate.return_value = ""
+    return page
+
+
+def test_petrolimex_scraper_instantiation():
+    page = _make_petrolimex_page()
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+    assert s.lookup_code == "VF4S5TMTE*"
+    assert "petrolimex" in s.url
+
+
+def test_petrolimex_scrape_success():
+    """Happy path: captcha solved first try, downloads visible, returns xml+pdf."""
+    page = _make_petrolimex_page()
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+
+    xml_data = b"<?xml version='1.0'?><HDon/>"
+    pdf_data = b"%PDF-1.4 fake"
+
+    with patch.object(s, "_enter_code"), \
+         patch.object(s, "_screenshot_and_solve_captcha", return_value="1234"), \
+         patch.object(s, "_enter_captcha"), \
+         patch.object(s, "_click_submit"), \
+         patch.object(s, "_page_says_not_found", return_value=False), \
+         patch.object(s, "_downloads_visible", return_value=True), \
+         patch.object(s, "_download_all", return_value=(xml_data, pdf_data)):
+        result = s.scrape()
+
+    assert result.xml_bytes == xml_data
+    assert result.pdf_bytes == pdf_data
+
+
+def test_petrolimex_scrape_invalid_captcha_retries_then_raises():
+    """Solver returns non-4-digit string every time → CaptchaRequiredException."""
+    page = _make_petrolimex_page()
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+
+    with patch.object(s, "_enter_code"), \
+         patch.object(s, "_screenshot_and_solve_captcha", return_value=""), \
+         patch.object(s, "_enter_captcha") as mock_enter, \
+         patch.object(s, "_click_submit") as mock_submit, \
+         pytest.raises(CaptchaRequiredException, match="3 attempts"):
+        s.scrape()
+
+    mock_enter.assert_not_called()
+    mock_submit.assert_not_called()
+
+
+def test_petrolimex_scrape_no_downloads_after_submit_retries_then_raises():
+    """Captcha valid but no downloads ever appear → CaptchaRequiredException."""
+    page = _make_petrolimex_page()
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+
+    with patch.object(s, "_enter_code"), \
+         patch.object(s, "_screenshot_and_solve_captcha", return_value="9999"), \
+         patch.object(s, "_enter_captcha"), \
+         patch.object(s, "_click_submit"), \
+         patch.object(s, "_page_says_not_found", return_value=False), \
+         patch.object(s, "_downloads_visible", return_value=False), \
+         pytest.raises(CaptchaRequiredException, match="3 attempts"):
+        s.scrape()
+
+
+def test_petrolimex_scrape_raises_invoice_not_found():
+    """If page says not found after submit → InvoiceNotFoundException."""
+    page = _make_petrolimex_page()
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+
+    with patch.object(s, "_enter_code"), \
+         patch.object(s, "_screenshot_and_solve_captcha", return_value="5678"), \
+         patch.object(s, "_enter_captcha"), \
+         patch.object(s, "_click_submit"), \
+         patch.object(s, "_page_says_not_found", return_value=True), \
+         pytest.raises(InvoiceNotFoundException, match="not found"):
+        s.scrape()
+
+
+def test_petrolimex_screenshot_and_solve_calls_capsolver():
+    """_screenshot_and_solve_captcha delegates to capsolver_solve_image."""
+    page = _make_petrolimex_page()
+    img_loc = MagicMock()
+    img_loc.count.return_value = 1
+    img_loc.first.is_visible.return_value = True
+    page.locator.return_value.first = img_loc
+
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+
+    with patch("scrapers.petrolimex.capsolver_solve_image", return_value="4321") as mock_cap, \
+         patch("tempfile.NamedTemporaryFile") as mock_tmp, \
+         patch("os.unlink"):
+        mock_tmp.return_value.__enter__ = lambda self: self
+        mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+        mock_tmp.return_value.name = "/tmp/plx_test.png"
+        result = s._screenshot_and_solve_captcha()
+
+    mock_cap.assert_called_once_with("/tmp/plx_test.png")
+    assert result == "4321"
+
+
+# ── uid=111 Petrolimex email flow ────────────────────────────────────────────
+
+from web_extraction_router import _extract_lookup_code
+
+
+def test_extract_lookup_code_preserves_asterisk():
+    """uid=111 email: code in email is VF4S5TMTE* — asterisk must be kept."""
+    text = (
+        "Kính gửi Quý khách hàng,\n"
+        "Mã tra cứu: VF4S5TMTE*\n"
+        "Vui lòng truy cập hoadon.petrolimex.com.vn để tra cứu hóa đơn.\n"
+    )
+    code = _extract_lookup_code(text)
+    assert code == "VF4S5TMTE*"
+
+
+def test_extract_lookup_code_plain_code_no_asterisk():
+    """Codes without asterisk are extracted unchanged."""
+    text = "Mã tra cứu: ABCDEF123\n"
+    code = _extract_lookup_code(text)
+    assert code == "ABCDEF123"
+
+
+def test_petrolimex_uid111_full_flow():
+    """Simulate the full uid=111 email: code=VF4S5TMTE*, captcha solved, xml+pdf returned."""
+    page = _make_petrolimex_page()
+    s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
+
+    xml_data = b"<?xml version='1.0'?><HDon/>"
+    pdf_data = b"%PDF-1.4 fake"
+
+    with patch.object(s, "_enter_code") as mock_code, \
+         patch.object(s, "_screenshot_and_solve_captcha", return_value="9264"), \
+         patch.object(s, "_enter_captcha") as mock_captcha, \
+         patch.object(s, "_click_submit") as mock_submit, \
+         patch.object(s, "_page_says_not_found", return_value=False), \
+         patch.object(s, "_downloads_visible", return_value=True), \
+         patch.object(s, "_download_all", return_value=(xml_data, pdf_data)):
+        result = s.scrape()
+
+    # Verify the full interaction chain ran in order
+    mock_code.assert_called_once()
+    mock_captcha.assert_called_once_with("9264")
+    mock_submit.assert_called_once()
+    assert result.xml_bytes == xml_data
+    assert result.pdf_bytes == pdf_data

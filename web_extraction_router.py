@@ -17,7 +17,7 @@ DIRECT_LINK_RE = re.compile(
     r"(token=|/download|/file|\.xml|\.pdf|/invoice|hoadon|tra-cuu)",
     re.IGNORECASE,
 )
-URL_RE = re.compile(r"https?://[^\s\"<>]+", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 # REGEX_PATTERNS = [
 #     re.compile(r"mã số[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
 #     re.compile(r"mã tra cứu[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
@@ -25,10 +25,10 @@ URL_RE = re.compile(r"https?://[^\s\"<>]+", re.IGNORECASE)
 #     re.compile(r"Mã bí mật[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
 # ]
 REGEX_PATTERNS = [
-    re.compile(r"mã số.*?[\s:]*([A-Z0-9_]+)\*?\r?$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"mã tra cứu.*?[\s:]*([A-Z0-9_]+)\*?\r?$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"mã nhận hóa đơn.*?[\s:]*([A-Z0-9_]+)\*?\r?$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"mã bí mật.*?[\s:]*([A-Z0-9_]+)\*?\r?$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"mã số.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"mã tra cứu.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"mã nhận hóa đơn.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"mã bí mật.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
 ]
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -114,10 +114,19 @@ def _extract_urls(text: str) -> list[str]:
 
 
 def _extract_lookup_code(text: str) -> str | None:
-    for pattern in REGEX_PATTERNS:
-        match = pattern.search(text or "")
-        if match:
-            return match.group(1)
+    candidates = [text or ""]
+    # Also try with HTML stripped — handles emails with no plain-text body
+    if "<" in (text or ""):
+        try:
+            plain = BeautifulSoup(text, "html.parser").get_text("\n")
+            candidates.append(plain)
+        except Exception:
+            pass
+    for candidate in candidates:
+        for pattern in REGEX_PATTERNS:
+            match = pattern.search(candidate)
+            if match:
+                return match.group(1)
     return None
 
 
@@ -236,6 +245,19 @@ def process_branch_web(email, download_dir: str) -> ScrapedResult | None:
     lookup_url = _pick_best_url(_extract_urls(combined))
     if not code or not lookup_url:
         logger.warning("process_branch_web: no lookup code or URL found in email body")
+        return None
+
+    # Fast TCP reachability check — skip Playwright entirely if host is unreachable
+    try:
+        import socket
+        from urllib.parse import urlparse as _urlparse
+        _parsed = _urlparse(lookup_url)
+        _host = _parsed.hostname
+        _port = _parsed.port or (443 if _parsed.scheme == "https" else 80)
+        with socket.create_connection((_host, _port), timeout=5):
+            pass
+    except Exception as _e:
+        logger.error(f"process_branch_web: host unreachable ({lookup_url}): {_e} — skipping Playwright")
         return None
 
     for attempt in range(2):
