@@ -4,21 +4,17 @@ import random
 import re
 import tempfile
 
-import PIL.Image
-import PIL.ImageEnhance
-import PIL.ImageFilter
-
-from .base import BaseInvoiceScraper, _get_gemini_client, capsolver_solve_image
+from .base import BaseInvoiceScraper, capsolver_solve_image
 from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
 from .result import ScrapedResult
 
 logger = logging.getLogger(__name__)
 
-# Selectors derived from https://vttphcm-tt78.vnpt-invoice.com.vn/ HTML inspection
-_CODE_SEL = 'input#strFkey, input[name="strFkey"]'
-_CAPTCHA_IMG = "img.captcha_img, img[src*='/Captcha/Show' i]"
-_CAPTCHA_INPUT = 'input#captch, input[name="captch"]'
-_SUBMIT_BTN = 'button[name="submit"][type="submit"], button.btn-search, button[type="submit"]'
+# Selectors from playwright codegen — https://vttphcm-tt78.vnpt-invoice.com.vn/
+_CODE_SEL = '[placeholder="Nhập mã tra cứu hóa đơn"], input#strFkey, input[name="strFkey"]'
+_CAPTCHA_IMG = "#text img"
+_CAPTCHA_INPUT = "#text #captch"
+_SUBMIT_BTN = 'button:has-text("Tìm kiếm"), button[type="submit"]'
 # Results land in #ReportViewInv; fall back to any visible table row
 _RESULT_ROW = "#ReportViewInv table tbody tr, table tbody tr"
 
@@ -157,7 +153,7 @@ class VnptScraper(BaseInvoiceScraper):
         """
         self.page.evaluate(
             """() => {
-                const img = document.querySelector('img.captcha_img, img[src*="/Captcha/Show" i]');
+                const img = document.querySelector('#text img');
                 if (!img) return;
                 const base = img.src.split('?')[0];
                 img.src = base + '?t=' + Date.now();
@@ -286,7 +282,10 @@ class VnptScraper(BaseInvoiceScraper):
             captcha_path = tf.name
         try:
             img_loc.screenshot(path=captcha_path)
-            return _solve_vnpt_captcha(captcha_path)
+            result = capsolver_solve_image(captcha_path) or ""
+            result = re.sub(r"\s+", "", result)
+            logger.info("VNPT: Capsolver captcha result = '%s'", result)
+            return result
         finally:
             os.unlink(captcha_path)
 
@@ -302,88 +301,4 @@ def _classify_bytes(data: bytes) -> str | None:
     return None
 
 
-def _capsolver_solve(image_path: str) -> str | None:
-    """Submit captcha image to Capsolver API; return 4-digit string or None."""
-    import requests as _requests
 
-    api_key = os.environ.get("CAPSOLVER_API_KEY", "")
-    if not api_key:
-        return None
-
-    with open(image_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
-    create_resp = _requests.post(
-        "https://api.capsolver.com/createTask",
-        json={"clientKey": api_key, "task": {"type": "ImageToTextTask", "body": b64}},
-        timeout=15,
-    ).json()
-    task_id = create_resp.get("taskId")
-    if not task_id:
-        logger.debug("VNPT: Capsolver createTask returned no taskId: %s", create_resp)
-        return None
-
-    for _ in range(10):
-        time.sleep(1)
-        result_resp = _requests.post(
-            "https://api.capsolver.com/getTaskResult",
-            json={"clientKey": api_key, "taskId": task_id},
-            timeout=10,
-        ).json()
-        if result_resp.get("status") == "ready":
-            return result_resp.get("solution", {}).get("text", "")
-
-    logger.debug("VNPT: Capsolver timed out waiting for task %s", task_id)
-    return None
-
-
-def _solve_vnpt_captcha(image_path: str) -> str:
-    """
-    Tiered captcha solver: ddddocr on raw image → Capsolver (if key set) → Gemini with preprocessing.
-    ddddocr receives the raw screenshot; Pillow preprocessing runs only for Gemini.
-    """
-    # Solver 1: ddddocr on raw screenshot bytes
-    try:
-        import ddddocr
-        ocr = ddddocr.DdddOcr(show_ad=False)
-        with open(image_path, "rb") as f:
-            raw_result = re.sub(r"\s+", "", ocr.classification(f.read()))
-        if re.fullmatch(r"[0-9]{4}", raw_result):
-            logger.info("VNPT: ddddocr captcha result = '%s'", raw_result)
-            return raw_result
-        logger.debug("VNPT: ddddocr returned non-4-digit '%s', trying next solver", raw_result)
-    except Exception as exc:
-        logger.debug("VNPT: ddddocr solver failed: %s", exc)
-
-    # Solver 2: Capsolver (only when CAPSOLVER_API_KEY env var is set)
-    if os.environ.get("CAPSOLVER_API_KEY"):
-        try:
-            cap_result = capsolver_solve_image(image_path)
-            if cap_result:
-                stripped = re.sub(r"\s+", "", cap_result)
-                if re.fullmatch(r"[0-9]{4}", stripped):
-                    logger.info("VNPT: Capsolver captcha result = '%s'", stripped)
-                    return stripped
-            logger.debug("VNPT: Capsolver returned non-4-digit '%s', falling back to Gemini", cap_result)
-        except Exception as exc:
-            logger.debug("VNPT: Capsolver solver failed: %s", exc)
-
-    # Solver 3: Gemini with Pillow preprocessing (existing logic)
-    img = PIL.Image.open(image_path).convert("L")
-    w, h = img.size
-    img = img.resize((w * 4, h * 4), PIL.Image.LANCZOS)
-    img = img.filter(PIL.ImageFilter.SHARPEN)
-    img = PIL.ImageEnhance.Contrast(img).enhance(2.5)
-    img = img.convert("RGB")
-
-    response = _get_gemini_client().models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[
-            "This is a VNPT Vietnam e-invoice portal captcha image showing exactly 4 distorted digits "
-            "(digits 0–9 only, no letters). Carefully read each digit left-to-right. "
-            "Return ONLY the 4-digit sequence with no spaces, punctuation, or explanation.",
-            img,
-        ],
-    )
-    raw = response.text.strip()
-    logger.info("VNPT: Gemini raw captcha response = '%s'", raw)
-    return re.sub(r"\s+", "", raw)

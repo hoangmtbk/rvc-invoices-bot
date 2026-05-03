@@ -1,6 +1,3 @@
-import sys
-
-import PIL.Image as _PILImage
 import pytest
 from scrapers.result import ScrapedResult
 from scrapers.exceptions import (
@@ -172,7 +169,7 @@ def test_scrape_invoice_saves_files_when_download_dir_given(tmp_path):
 
 # ── VNPT scraper unit tests ──────────────────────────────────────────────────
 
-from scrapers.vnpt import VnptScraper, _classify_bytes, _solve_vnpt_captcha
+from scrapers.vnpt import VnptScraper, _classify_bytes
 
 
 def test_classify_bytes_xml():
@@ -394,82 +391,29 @@ def test_scrape_bypass_path_raises_when_no_files_downloaded():
         s.scrape()
 
 
-# ── tiered OCR pipeline tests ────────────────────────────────────────────────
+# ── VNPT captcha — Capsolver integration test ────────────────────────────────
 
 
-def _make_png(tmp_path) -> str:
-    """Write a minimal 40x20 greyscale PNG and return its path."""
-    p = tmp_path / "cap.png"
-    _PILImage.new("L", (40, 20)).save(str(p))
-    return str(p)
+def test_screenshot_and_solve_captcha_calls_capsolver():
+    """_screenshot_and_solve_captcha must call capsolver_solve_image with the screenshot path."""
+    page = MagicMock()
+    img_loc = MagicMock()
+    img_loc.count.return_value = 1
+    img_loc.is_visible.return_value = True
+    page.locator.return_value.first = img_loc
 
+    s = VnptScraper(page, "https://vttphcm-tt78.vnpt-invoice.com.vn/", "CODE")
 
-def test_solve_captcha_uses_ddddocr_when_returns_4_digits(tmp_path):
-    # _solve_vnpt_captcha does `import ddddocr` locally at call time;
-    # patching sys.modules["ddddocr"] before the call injects our mock.
-    img_path = _make_png(tmp_path)
-    mock_ddddocr = MagicMock()
-    mock_ocr = MagicMock()
-    mock_ocr.classification.return_value = "5678"
-    mock_ddddocr.DdddOcr.return_value = mock_ocr
+    with patch("scrapers.vnpt.capsolver_solve_image", return_value="7094") as mock_cap, \
+         patch("tempfile.NamedTemporaryFile") as mock_tmp, \
+         patch("os.unlink"):
+        mock_tmp.return_value.__enter__ = lambda self: self
+        mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+        mock_tmp.return_value.name = "/tmp/cap_test.png"
+        result = s._screenshot_and_solve_captcha()
 
-    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}):
-        result = _solve_vnpt_captcha(img_path)
-
-    assert result == "5678"
-    mock_ocr.classification.assert_called_once()
-
-
-def test_solve_captcha_falls_back_to_gemini_when_ddddocr_returns_non_digits(tmp_path):
-    img_path = _make_png(tmp_path)
-    mock_ddddocr = MagicMock()
-    mock_ocr = MagicMock()
-    mock_ocr.classification.return_value = "AB1C"   # letters — invalid
-    mock_ddddocr.DdddOcr.return_value = mock_ocr
-
-    mock_response = MagicMock()
-    mock_response.text = "1234"
-
-    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
-         patch("scrapers.vnpt._get_gemini_client") as mock_gc:
-        mock_gc.return_value.models.generate_content.return_value = mock_response
-        result = _solve_vnpt_captcha(img_path)
-
-    assert result == "1234"
-    mock_gc.return_value.models.generate_content.assert_called_once()
-
-
-def test_solve_captcha_falls_back_to_gemini_when_ddddocr_raises(tmp_path):
-    img_path = _make_png(tmp_path)
-    mock_ddddocr = MagicMock()
-    mock_ddddocr.DdddOcr.side_effect = RuntimeError("model load failed")
-
-    mock_response = MagicMock()
-    mock_response.text = "9876"
-
-    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
-         patch.dict("os.environ", {"CAPSOLVER_API_KEY": ""}), \
-         patch("scrapers.vnpt._get_gemini_client") as mock_gc:
-        mock_gc.return_value.models.generate_content.return_value = mock_response
-        result = _solve_vnpt_captcha(img_path)
-
-    assert result == "9876"
-
-
-def test_solve_captcha_uses_capsolver_when_key_set_and_ddddocr_fails(tmp_path):
-    img_path = _make_png(tmp_path)
-    mock_ddddocr = MagicMock()
-    mock_ddddocr.DdddOcr.side_effect = RuntimeError("model load failed")
-
-    with patch.dict(sys.modules, {"ddddocr": mock_ddddocr}), \
-         patch.dict("os.environ", {"CAPSOLVER_API_KEY": "test-key"}), \
-         patch("scrapers.vnpt.capsolver_solve_image", return_value="4321") as mock_cap, \
-         patch("scrapers.vnpt._get_gemini_client") as mock_gc:
-        result = _solve_vnpt_captcha(img_path)
-
-    assert result == "4321"
-    mock_cap.assert_called_once_with(img_path)
-    mock_gc.assert_not_called()
+    mock_cap.assert_called_once_with("/tmp/cap_test.png")
+    assert result == "7094"
 
 
 # ── pre-submission validation tests ─────────────────────────────────────────
