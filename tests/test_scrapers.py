@@ -479,7 +479,6 @@ def test_petrolimex_scrape_success():
          patch.object(s, "_screenshot_and_solve_captcha", return_value="1234"), \
          patch.object(s, "_enter_captcha"), \
          patch.object(s, "_click_submit"), \
-         patch.object(s, "_page_says_not_found", return_value=False), \
          patch.object(s, "_downloads_visible", return_value=True), \
          patch.object(s, "_download_all", return_value=(xml_data, pdf_data)):
         result = s.scrape()
@@ -513,22 +512,21 @@ def test_petrolimex_scrape_no_downloads_after_submit_retries_then_raises():
          patch.object(s, "_screenshot_and_solve_captcha", return_value="9999"), \
          patch.object(s, "_enter_captcha"), \
          patch.object(s, "_click_submit"), \
-         patch.object(s, "_page_says_not_found", return_value=False), \
          patch.object(s, "_downloads_visible", return_value=False), \
          pytest.raises(CaptchaRequiredException, match="3 attempts"):
         s.scrape()
 
 
 def test_petrolimex_scrape_raises_invoice_not_found():
-    """If page says not found after submit → InvoiceNotFoundException."""
+    """If page body contains 'không tìm thấy' after submit → InvoiceNotFoundException."""
     page = _make_petrolimex_page()
+    page.evaluate.return_value = "kết quả không tìm thấy hóa đơn"
     s = PetrolimexScraper(page, "https://hoadon.petrolimex.com.vn", "VF4S5TMTE*")
 
     with patch.object(s, "_enter_code"), \
          patch.object(s, "_screenshot_and_solve_captcha", return_value="5678"), \
          patch.object(s, "_enter_captcha"), \
          patch.object(s, "_click_submit"), \
-         patch.object(s, "_page_says_not_found", return_value=True), \
          pytest.raises(InvoiceNotFoundException, match="not found"):
         s.scrape()
 
@@ -590,7 +588,6 @@ def test_petrolimex_uid111_full_flow():
          patch.object(s, "_screenshot_and_solve_captcha", return_value="9264"), \
          patch.object(s, "_enter_captcha") as mock_captcha, \
          patch.object(s, "_click_submit") as mock_submit, \
-         patch.object(s, "_page_says_not_found", return_value=False), \
          patch.object(s, "_downloads_visible", return_value=True), \
          patch.object(s, "_download_all", return_value=(xml_data, pdf_data)):
         result = s.scrape()

@@ -33,6 +33,10 @@ _SUBMIT_SEL = (
 )
 # Both files are labelled "Tải" — classify by content after download
 _DOWNLOAD_LINK_SEL = 'a:has-text("Tải")'
+# Result table appears after a successful submit; use as wait anchor
+_RESULT_TABLE_SEL = 'table, .danh-sach, #SearchformByfkey ~ *, a:has-text("Tải")'
+# Captcha wrong — server shows one of these messages
+_CAPTCHA_ERROR_TEXTS = ("mã xác thực", "sai mã", "nhập lại", "captcha", "verification")
 
 _MAX_RETRIES = 3
 
@@ -61,17 +65,27 @@ class PetrolimexScraper(BaseInvoiceScraper):
             self._enter_captcha(solution)
             self._click_submit()
 
-            if self._page_says_not_found():
+            body = self.page.evaluate("() => document.body.innerText").lower()
+            if self._captcha_error_in_body(body):
+                logger.warning(
+                    "Petrolimex: captcha rejected by server on attempt %d", attempt + 1
+                )
+                if attempt < _MAX_RETRIES - 1:
+                    self.page.reload(wait_until="networkidle")
+                continue
+
+            if "không tìm thấy" in body or "không có hóa đơn" in body:
                 raise InvoiceNotFoundException(
                     f"Petrolimex: invoice not found for '{self.lookup_code}'"
                 )
             if self._downloads_visible():
                 break
 
+            logger.warning(
+                "Petrolimex: no downloads after attempt %d — page body (300 chars): %s",
+                attempt + 1, body[:300],
+            )
             if attempt < _MAX_RETRIES - 1:
-                logger.warning(
-                    "Petrolimex: no downloads after attempt %d, reloading", attempt + 1
-                )
                 self.page.reload(wait_until="networkidle")
         else:
             raise CaptchaRequiredException(
@@ -126,21 +140,20 @@ class PetrolimexScraper(BaseInvoiceScraper):
         btn.hover()
         self._delay(0.3, 0.8)
         btn.click()
-        # wait for page/XHR to settle after form submission
+        # Wait for EITHER download links OR any result/error content to appear
         try:
-            self.page.wait_for_load_state("networkidle", timeout=10_000)
+            self.page.wait_for_selector(
+                _DOWNLOAD_LINK_SEL + ", .field-validation-error, #alert",
+                timeout=15_000,
+            )
         except Exception:
-            time.sleep(4)
+            # fallback: give the page extra time to settle
+            time.sleep(6)
 
-    def _page_says_not_found(self) -> bool:
-        text: str = self.page.evaluate("() => document.body.innerText.toLowerCase()")
-        return "không tìm thấy" in text or "không có hóa đơn" in text
+    def _captcha_error_in_body(self, body_lower: str) -> bool:
+        return any(kw in body_lower for kw in _CAPTCHA_ERROR_TEXTS)
 
     def _downloads_visible(self) -> bool:
-        try:
-            self.page.locator(_DOWNLOAD_LINK_SEL).first.wait_for(state="attached", timeout=8_000)
-        except Exception:
-            pass
         return self.page.locator(_DOWNLOAD_LINK_SEL).count() > 0
 
     def _download_all(self) -> tuple[bytes | None, bytes | None]:
