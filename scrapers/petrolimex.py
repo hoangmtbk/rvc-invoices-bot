@@ -3,6 +3,7 @@ import os
 import random
 import re
 import tempfile
+import time
 
 from .base import BaseInvoiceScraper, capsolver_solve_image
 from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
@@ -125,13 +126,21 @@ class PetrolimexScraper(BaseInvoiceScraper):
         btn.hover()
         self._delay(0.3, 0.8)
         btn.click()
-        self._delay(2.5, 4.0)
+        # wait for page/XHR to settle after form submission
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=10_000)
+        except Exception:
+            time.sleep(4)
 
     def _page_says_not_found(self) -> bool:
         text: str = self.page.evaluate("() => document.body.innerText.toLowerCase()")
         return "không tìm thấy" in text or "không có hóa đơn" in text
 
     def _downloads_visible(self) -> bool:
+        try:
+            self.page.locator(_DOWNLOAD_LINK_SEL).first.wait_for(state="attached", timeout=8_000)
+        except Exception:
+            pass
         return self.page.locator(_DOWNLOAD_LINK_SEL).count() > 0
 
     def _download_all(self) -> tuple[bytes | None, bytes | None]:
