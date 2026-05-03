@@ -33,10 +33,7 @@ _SUBMIT_SEL = (
 )
 # Both files are labelled "Tải" — classify by content after download
 _DOWNLOAD_LINK_SEL = 'a:has-text("Tải")'
-# Result table appears after a successful submit; use as wait anchor
-_RESULT_TABLE_SEL = 'table, .danh-sach, #SearchformByfkey ~ *, a:has-text("Tải")'
-# Captcha wrong — server shows one of these messages
-_CAPTCHA_ERROR_TEXTS = ("mã xác thực", "sai mã", "nhập lại", "captcha", "verification")
+
 
 _MAX_RETRIES = 3
 
@@ -66,14 +63,6 @@ class PetrolimexScraper(BaseInvoiceScraper):
             self._click_submit()
 
             body = self.page.evaluate("() => document.body.innerText").lower()
-            if self._captcha_error_in_body(body):
-                logger.warning(
-                    "Petrolimex: captcha rejected by server on attempt %d", attempt + 1
-                )
-                if attempt < _MAX_RETRIES - 1:
-                    self.page.reload(wait_until="networkidle")
-                continue
-
             if "không tìm thấy" in body or "không có hóa đơn" in body:
                 raise InvoiceNotFoundException(
                     f"Petrolimex: invoice not found for '{self.lookup_code}'"
@@ -140,18 +129,12 @@ class PetrolimexScraper(BaseInvoiceScraper):
         btn.hover()
         self._delay(0.3, 0.8)
         btn.click()
-        # Wait for EITHER download links OR any result/error content to appear
+        # Actively wait for download links to appear in the DOM (up to 20s)
+        # Fall back to a fixed sleep if the locator wait fails
         try:
-            self.page.wait_for_selector(
-                _DOWNLOAD_LINK_SEL + ", .field-validation-error, #alert",
-                timeout=15_000,
-            )
+            self.page.locator(_DOWNLOAD_LINK_SEL).first.wait_for(state="visible", timeout=20_000)
         except Exception:
-            # fallback: give the page extra time to settle
             time.sleep(6)
-
-    def _captcha_error_in_body(self, body_lower: str) -> bool:
-        return any(kw in body_lower for kw in _CAPTCHA_ERROR_TEXTS)
 
     def _downloads_visible(self) -> bool:
         return self.page.locator(_DOWNLOAD_LINK_SEL).count() > 0
