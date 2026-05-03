@@ -20,8 +20,16 @@ _CAPTCHA_IMG_SEL = (
     'img[src*="captch" i]'
 )
 _CAPTCHA_INPUT_SEL = '#SearchformByfkey #captch'
-# Submit button text is "Tìm kiếm"
-_SUBMIT_SEL = 'button:has-text("Tìm kiếm"), #SearchformByfkey button[type="submit"], button[type="submit"]'
+# Submit — try form-scoped first, then broad fallbacks (input or button)
+_SUBMIT_SEL = (
+    '#SearchformByfkey button[type="submit"], '
+    '#SearchformByfkey input[type="submit"], '
+    '#SearchformByfkey button, '
+    'button:has-text("Tìm"), '
+    'button:has-text("Tra cứu"), '
+    'input[type="submit"], '
+    'button[type="submit"]'
+)
 # Both files are labelled "Tải" — classify by content after download
 _DOWNLOAD_LINK_SEL = 'a:has-text("Tải")'
 
@@ -113,7 +121,7 @@ class PetrolimexScraper(BaseInvoiceScraper):
 
     def _click_submit(self) -> None:
         btn = self.page.locator(_SUBMIT_SEL).first
-        btn.wait_for(state="visible", timeout=10_000)
+        btn.wait_for(state="visible", timeout=15_000)
         btn.hover()
         self._delay(0.3, 0.8)
         btn.click()
