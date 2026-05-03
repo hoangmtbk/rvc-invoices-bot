@@ -14,9 +14,9 @@ from .result import ScrapedResult
 
 logger = logging.getLogger(__name__)
 
-# Selectors derived from playwright codegen of hoadon.petrolimex.com.vn
-# Lookup code input: placeholder "Nhập mã tra cứu hóa đơn"
-_CODE_SEL = 'input[placeholder*="mã tra cứu" i]'
+# Selectors from playwright codegen — hoadon.petrolimex.com.vn
+# Lookup code: label contains "mã tra cứu" — match via adjacent label has-text
+_CODE_SEL = '#SearchformByfkey input[type="text"], label:has-text("mã tra cứu") + input, label:has-text("mã tra cứu") ~ input, input[name*="fkey" i], input[id*="fkey" i]'
 # Captcha — form ID is #SearchformByfkey, input ID is #captch (NOT #captcha)
 _CAPTCHA_IMG_SEL = (
     '#SearchformByfkey img[src*="captch" i], '
@@ -24,7 +24,7 @@ _CAPTCHA_IMG_SEL = (
     'img[src*="captch" i]'
 )
 _CAPTCHA_INPUT_SEL = '#SearchformByfkey #captch'
-# Submit button text is "Tìm kiếm" (not "Tra cứu")
+# Submit button text is "Tìm kiếm"
 _SUBMIT_SEL = 'button:has-text("Tìm kiếm"), #SearchformByfkey button[type="submit"], button[type="submit"]'
 # Both files are labelled "Tải" — classify by content after download
 _DOWNLOAD_LINK_SEL = 'a:has-text("Tải")'
