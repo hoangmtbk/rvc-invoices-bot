@@ -2,6 +2,6 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.web.txt .
 RUN pip install --no-cache-dir -r requirements.web.txt
-COPY config.py storage.py web_app.py ./
+COPY config.py storage.py web_app.py data_extractor.py file_storage.py ./
 COPY templates/ templates/
 CMD ["python", "web_app.py"]

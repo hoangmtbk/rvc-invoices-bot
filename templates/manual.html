@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nạp hóa đơn thủ công — RVC</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-sm">
+<div class="mx-auto max-w-3xl p-6">
+
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-xl font-bold text-gray-800">📤 Nạp hóa đơn thủ công</h1>
+    <a href="/?secret={{ secret }}"
+       class="text-sm text-blue-600 underline hover:text-blue-800">← Về trang danh sách</a>
+  </div>
+
+  {% if error %}
+  <div class="bg-red-50 border border-red-300 text-red-700 rounded-lg px-4 py-3 mb-6">
+    ⚠ {{ error }}
+  </div>
+  {% endif %}
+
+  {% if results is defined %}
+  <div class="bg-white rounded-lg shadow p-4 mb-6">
+    <h2 class="font-semibold text-gray-700 mb-3">Kết quả xử lý</h2>
+    <table class="w-full text-sm border-collapse">
+      <thead>
+        <tr class="bg-gray-100 text-left">
+          <th class="px-3 py-2 border-b font-medium text-gray-600">STT</th>
+          <th class="px-3 py-2 border-b font-medium text-gray-600">Số hóa đơn</th>
+          <th class="px-3 py-2 border-b font-medium text-gray-600">Trạng thái</th>
+          <th class="px-3 py-2 border-b font-medium text-gray-600">Chi tiết</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr class="{{ 'bg-green-50' if r.status == 'created' else ('bg-yellow-50' if r.status == 'updated' else ('bg-gray-50' if r.status == 'skipped' else 'bg-red-50')) }}">
+          <td class="px-3 py-2 border-b text-gray-500">{{ loop.index }}</td>
+          <td class="px-3 py-2 border-b font-mono text-gray-800">{{ r.inv }}</td>
+          <td class="px-3 py-2 border-b">
+            {% if r.status == 'created' %}
+              <span class="inline-block bg-green-100 text-green-700 rounded px-2 py-0.5">✓ Thêm mới</span>
+            {% elif r.status == 'updated' %}
+              <span class="inline-block bg-yellow-100 text-yellow-700 rounded px-2 py-0.5">↑ Cập nhật</span>
+            {% elif r.status == 'skipped' %}
+              <span class="inline-block bg-gray-100 text-gray-600 rounded px-2 py-0.5">– Bỏ qua</span>
+            {% else %}
+              <span class="inline-block bg-red-100 text-red-700 rounded px-2 py-0.5">✗ Lỗi</span>
+            {% endif %}
+          </td>
+          <td class="px-3 py-2 border-b text-gray-600">{{ r.detail }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4" class="px-3 py-4 text-center text-gray-400">Không có hóa đơn nào được xử lý</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="mt-4">
+      <a href="/manual?secret={{ secret }}"
+         class="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+        + Nạp thêm
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if results is not defined %}
+  <!-- Upload form — only shown before first submission -->
+  <form id="upload-form"
+        method="post"
+        action="/manual?secret={{ secret }}"
+        enctype="multipart/form-data"
+        class="bg-white rounded-lg shadow p-6 space-y-6">
+
+    <!-- Secret code -->
+    <div>
+      <label class="block text-xs font-semibold text-gray-600 mb-1">
+        Mã bí mật <span class="text-red-500">*</span>
+      </label>
+      <input type="password"
+             name="input_secret"
+             required
+             autocomplete="current-password"
+             placeholder="Nhập mã bí mật..."
+             class="border rounded px-3 py-2 w-64 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+      <p class="text-xs text-gray-400 mt-1">Cần đúng mã mới được phép nạp.</p>
+    </div>
+
+    <hr class="border-gray-200">
+
+    <!-- Invoice rows -->
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+          Danh sách hóa đơn
+        </span>
+        <button type="button"
+                onclick="addRow()"
+                class="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 border border-blue-300 rounded px-3 py-1 hover:bg-blue-50">
+          <span class="text-lg leading-none">+</span> Thêm dòng
+        </button>
+      </div>
+
+      <div class="text-xs text-gray-400 grid grid-cols-[2rem_1fr_1fr] gap-x-4 mb-1 pl-1">
+        <span>#</span>
+        <span>File XML</span>
+        <span>File PDF</span>
+      </div>
+
+      <div id="invoice-rows" class="space-y-2">
+        <!-- Row 1 (always present) -->
+        <div class="invoice-row grid grid-cols-[2rem_1fr_1fr] gap-x-4 items-center" data-idx="1">
+          <span class="row-num text-gray-400 text-center font-mono">1</span>
+          <label class="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer hover:bg-gray-50 text-xs text-gray-600">
+            <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0119 9.414V19a2 2 0 01-2 2z"/>
+            </svg>
+            <span class="file-label truncate">Chọn file XML</span>
+            <input type="file" name="xml_1" accept=".xml,text/xml,application/xml" class="hidden" onchange="updateLabel(this)">
+          </label>
+          <label class="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer hover:bg-gray-50 text-xs text-gray-600">
+            <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+            </svg>
+            <span class="file-label truncate">Chọn file PDF</span>
+            <input type="file" name="pdf_1" accept=".pdf,application/pdf" class="hidden" onchange="updateLabel(this)">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <hr class="border-gray-200">
+
+    <div class="flex gap-3">
+      <button type="submit"
+              class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-medium">
+        Nộp hóa đơn
+      </button>
+      <a href="/?secret={{ secret }}"
+         class="text-sm text-gray-500 underline py-2">Hủy</a>
+    </div>
+  </form>
+  {% endif %}
+
+</div>
+
+<script>
+let rowCount = 1;
+
+function addRow() {
+  rowCount++;
+  const idx = rowCount;
+  const container = document.getElementById('invoice-rows');
+  const div = document.createElement('div');
+  div.className = 'invoice-row grid grid-cols-[2rem_1fr_1fr] gap-x-4 items-center';
+  div.dataset.idx = idx;
+  div.innerHTML = `
+    <span class="row-num text-gray-400 text-center font-mono">${idx}</span>
+    <label class="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer hover:bg-gray-50 text-xs text-gray-600">
+      <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0119 9.414V19a2 2 0 01-2 2z"/>
+      </svg>
+      <span class="file-label truncate">Chọn file XML</span>
+      <input type="file" name="xml_${idx}" accept=".xml,text/xml,application/xml" class="hidden" onchange="updateLabel(this)">
+    </label>
+    <label class="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer hover:bg-gray-50 text-xs text-gray-600">
+      <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+      </svg>
+      <span class="file-label truncate">Chọn file PDF</span>
+      <input type="file" name="pdf_${idx}" accept=".pdf,application/pdf" class="hidden" onchange="updateLabel(this)">
+    </label>
+  `;
+  container.appendChild(div);
+}
+
+function updateLabel(input) {
+  const label = input.previousElementSibling;
+  label.textContent = input.files[0] ? input.files[0].name : (input.name.startsWith('xml') ? 'Chọn file XML' : 'Chọn file PDF');
+}
+</script>
+</body>
+</html>

@@ -34,3 +34,4 @@ MINIO_PUBLIC_URL: str = os.getenv("MINIO_PUBLIC_URL", "")
 
 WEB_PORT: int = int(os.getenv("WEB_PORT", "8080"))
 WEB_SECRET: str = os.getenv("WEB_SECRET", "")
+MANUAL_SECRET: str = os.getenv("MANUAL_SECRET", "")
