@@ -114,7 +114,41 @@ def _extract_urls(text: str) -> list[str]:
     return URL_RE.findall(text or "")
 
 
+_LOOKUP_LABEL_RE = re.compile(r"m\u00e3\s*tra\s*c\u1ee9u", re.IGNORECASE)
+
+
+def _extract_code_from_table(html: str) -> str | None:
+    """Scan HTML tables for a row whose label cell matches 'mã tra cứu';
+    return the stripped text of the adjacent value cell.
+    Only considers leaf cells (no nested <td>) to avoid matching layout wrappers."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for tr in soup.find_all("tr"):
+            cells = tr.find_all("td", recursive=False)
+            for i, td in enumerate(cells):
+                # Skip wrapper/layout cells that contain nested tds
+                if td.find("td"):
+                    continue
+                if _LOOKUP_LABEL_RE.search(td.get_text()):
+                    if i + 1 < len(cells):
+                        next_td = cells[i + 1]
+                        if next_td.find("td"):
+                            continue
+                        code = next_td.get_text(strip=True)
+                        if code:
+                            return code
+    except Exception:
+        pass
+    return None
+
+
 def _extract_lookup_code(text: str) -> str | None:
+    # Tier 0: structure-aware table scan (works for any code format incl. CTEL.)
+    if "<" in (text or ""):
+        code = _extract_code_from_table(text)
+        if code:
+            return code
+
     candidates = [text or ""]
     # Also try with HTML stripped — handles emails with no plain-text body
     if "<" in (text or ""):

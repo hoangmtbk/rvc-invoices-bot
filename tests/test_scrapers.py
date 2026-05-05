@@ -691,3 +691,104 @@ def test_bkavehoadon_scrape_invoice_not_found():
     s = BKAVeHoadonScraper(page, "https://tchd.ehoadon.vn/TCHD?MTC=BADCODE", "BADCODE")
     with pytest.raises(InvoiceNotFoundException):
         s.scrape()
+
+
+# ── CMCInvoice scraper tests ──────────────────────────────────────────────────
+
+from scrapers.cmcinvoice import CMCInvoiceScraper
+
+
+def test_factory_cmcinvoice():
+    from scrapers.factory import ScraperFactory
+    page = MagicMock()
+    s = ScraperFactory.get("https://cinvoice.cmctelecom.vn/", page, "CTEL.ABC")
+    assert isinstance(s, CMCInvoiceScraper)
+
+
+def test_cmcinvoice_instantiation():
+    page = MagicMock()
+    s = CMCInvoiceScraper(page, "https://cinvoice.cmctelecom.vn/", "CTEL.TEST123")
+    assert s.lookup_code == "CTEL.TEST123"
+
+
+def _make_cmc_page():
+    page = MagicMock()
+
+    # #invoiceCode input
+    code_inp = MagicMock()
+    code_inp.count.return_value = 1
+
+    # submit button — not disabled after token inject
+    submit_btn_first = MagicMock()
+    submit_btn_first.evaluate.return_value = False   # not disabled
+    submit_btn = MagicMock()
+    submit_btn.first = submit_btn_first
+
+    # XML and PDF buttons visible in modal
+    xml_btn = MagicMock()
+    xml_btn.count.return_value = 1
+    xml_btn.is_visible.return_value = True
+
+    pdf_btn = MagicMock()
+    pdf_btn.count.return_value = 1
+    pdf_btn.is_visible.return_value = True
+
+    # XML download wait_for succeeds immediately
+    xml_wait = MagicMock()
+
+    def page_locator(sel):
+        if "invoiceCode" in sel:
+            return code_inp
+        if "Tra cứu" in sel:
+            return submit_btn
+        if "Tải XML" in sel:
+            xml_wait.first = xml_btn
+            return xml_wait
+        if "Tải PDF" in sel:
+            m = MagicMock()
+            m.first = pdf_btn
+            return m
+        return MagicMock(count=MagicMock(return_value=0))
+
+    page.locator.side_effect = page_locator
+    page.evaluate.return_value = "hóa đơn ok"
+    return page
+
+
+def test_cmcinvoice_scrape_success():
+    page = _make_cmc_page()
+    xml_data = b"<?xml version='1.0'?><HDon/>"
+    pdf_data = b"%PDF-1.4 fake"
+
+    with patch("scrapers.cmcinvoice._capsolver_recaptcha_v2", return_value="fake_token"):
+        with patch.object(CMCInvoiceScraper, "_download_btn",
+                          side_effect=[xml_data, pdf_data]):
+            s = CMCInvoiceScraper(page, "https://cinvoice.cmctelecom.vn/", "CTEL.XYZ")
+            result = s.scrape()
+
+    assert result.xml_bytes == xml_data
+    assert result.pdf_bytes == pdf_data
+
+
+def test_cmcinvoice_scrape_capsolver_failure():
+    page = _make_cmc_page()
+    with patch("scrapers.cmcinvoice._capsolver_recaptcha_v2", return_value=None):
+        s = CMCInvoiceScraper(page, "https://cinvoice.cmctelecom.vn/", "CTEL.XYZ")
+        with pytest.raises(CaptchaRequiredException):
+            s.scrape()
+
+
+def test_ctel_table_extraction():
+    from web_extraction_router import _extract_lookup_code, _extract_code_from_table
+    html = (
+        '<tr><td><b> Mã tra cứu:</b></td>'
+        '<td><b>CTEL.50A742E6A1F81205E0630E01040AB7A2</b></td></tr>'
+    )
+    assert _extract_code_from_table(html) == "CTEL.50A742E6A1F81205E0630E01040AB7A2"
+    assert _extract_lookup_code(html) == "CTEL.50A742E6A1F81205E0630E01040AB7A2"
+
+
+def test_table_extraction_ignores_non_lookup_rows():
+    from web_extraction_router import _extract_code_from_table
+    html = '<tr><td>Số hóa đơn</td><td>00023729</td></tr>'
+    assert _extract_code_from_table(html) is None
