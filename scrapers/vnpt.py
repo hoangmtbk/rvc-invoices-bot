@@ -3,6 +3,8 @@ import os
 import random
 import re
 import tempfile
+import zipfile
+import io
 
 from .base import BaseInvoiceScraper, capsolver_solve_image
 from .exceptions import CaptchaRequiredException, InvoiceNotFoundException
@@ -27,15 +29,30 @@ _CAPTCHA_VAL_ERROR_SEL = (
 
 _MAX_CAPTCHA_RETRIES = 3
 
-# Column headers visible in the result table (see UI screenshot)
-_COL_TAI_FILE = "Tải File"       # col 11 — main invoice download (XML or PDF)
-_COL_TAI_BANG_KE = "Tải bảng kê"  # col 12 — secondary file (often different format)
+# Column header for PDF download in the result table
+_COL_TAI_FILE = "Tải File"
+
+# "Xem" button in the result row — opens a popup with the invoice viewer
+_XEM_BTN_SEL = (
+    'td a:has(i.icon-eye-open), '
+    'td a[title*="Xem" i], '
+    'td a:has-text("Xem")'
+)
+# "Download invoice zip" button inside the modal opened by ajxCall4Portal
+_DOWNLOAD_ZIP_SEL = (
+    'a:has-text("Tải hóa đơn Zip"), '
+    'button:has-text("Tải hóa đơn Zip"), '
+    'a:has-text("Download invoice zip"), '
+    'button:has-text("Download invoice zip")'
+)
 
 
 class VnptScraper(BaseInvoiceScraper):
     def scrape(self) -> ScrapedResult:
         self._setup_dialogs()
-        self.page.goto(self.url, wait_until="networkidle")
+        self.page.goto(self.url, wait_until="domcontentloaded")
+        # Wait for the lookup code input to be visible before interacting
+        self.page.locator(_CODE_SEL).first.wait_for(state="visible", timeout=30_000)
         self._scroll()
 
         if self._probe_bypass():
@@ -161,7 +178,7 @@ class VnptScraper(BaseInvoiceScraper):
         )
         # Wait for the new captcha image download to complete
         try:
-            self.page.wait_for_load_state("networkidle", timeout=5_000)
+            self.page.wait_for_load_state("domcontentloaded", timeout=5_000)
         except Exception:
             self._delay(1.0, 1.5)
 
@@ -182,27 +199,68 @@ class VnptScraper(BaseInvoiceScraper):
     # ── file downloads ──────────────────────────────────────────────────────
 
     def _download_all_files(self) -> tuple[bytes | None, bytes | None]:
-        """Try every download column; classify by content and return (xml, pdf)."""
+        """Fetch XML via Xem→popup→zip, PDF via Tải File column or /downloadPDF href."""
         xml_bytes: bytes | None = None
         pdf_bytes: bytes | None = None
 
-        for col_name in (_COL_TAI_FILE, _COL_TAI_BANG_KE):
-            data = self._download_column(col_name)
-            if data is None:
-                continue
-            ctype = _classify_bytes(data)
-            if ctype == "xml" and xml_bytes is None:
-                logger.info("VNPT: '%s' → XML (%d bytes)", col_name, len(data))
-                xml_bytes = data
-            elif ctype == "pdf" and pdf_bytes is None:
-                logger.info("VNPT: '%s' → PDF (%d bytes)", col_name, len(data))
-                pdf_bytes = data
+        # ── XML: click "Xem", get popup, download zip, extract XML ──────────
+        try:
+            xml_bytes = self._download_xml_via_xem()
+        except Exception as exc:
+            logger.warning("VNPT: XML via Xem failed: %s", exc)
 
-        # Extra attempt: direct PDF href (common in VNPT portals)
+        # ── PDF: try Tải File column, then /downloadPDF href ──────────────────
+        try:
+            data = self._download_column(_COL_TAI_FILE)
+            if data and _classify_bytes(data) == "pdf":
+                logger.info("VNPT: '%s' → PDF (%d bytes)", _COL_TAI_FILE, len(data))
+                pdf_bytes = data
+        except Exception as exc:
+            logger.debug("VNPT: '%s' download failed: %s", _COL_TAI_FILE, exc)
+
         if pdf_bytes is None:
             pdf_bytes = self._download_pdf_via_href()
 
         return xml_bytes, pdf_bytes
+
+    def _download_xml_via_xem(self) -> bytes | None:
+        """Click the 'Xem' eye button → wait for the in-page modal → click
+        'Tải hóa đơn Zip' → unzip → return the first XML file's bytes.
+
+        NOTE: ajxCall4Portal() opens a modal on the SAME page (no new tab),
+        so we wait for the zip button to appear on page, not via expect_page.
+        """
+        xem = self.page.locator(_XEM_BTN_SEL).first
+        if xem.count() == 0 or not xem.is_visible():
+            logger.debug("VNPT: 'Xem' button not found in result row")
+            return None
+
+        xem.hover()
+        self._delay(0.2, 0.5)
+        xem.click()
+
+        # Wait for the modal/overlay with the zip download button
+        dl_btn = self.page.locator(_DOWNLOAD_ZIP_SEL).first
+        try:
+            dl_btn.wait_for(state="visible", timeout=10_000)
+        except Exception:
+            logger.warning(
+                "VNPT: 'Tải hóa đơn Zip' button not found after Xem click. "
+                "Body snippet: %s",
+                self.page.evaluate("() => document.body.innerText")[:400],
+            )
+            return None
+
+        with self.page.expect_download(timeout=30_000) as dl_info:
+            dl_btn.hover()
+            self._delay(0.2, 0.5)
+            dl_btn.click()
+
+        download = dl_info.value
+        zip_path = download.path()
+        logger.info("VNPT: downloaded zip: %s", zip_path)
+
+        return _extract_xml_from_zip(zip_path)
 
     def _download_column(self, col_name: str) -> bytes | None:
         """Locate the download link for *col_name* header; try GET then click-download."""
@@ -219,7 +277,7 @@ class VnptScraper(BaseInvoiceScraper):
                     logger.debug("VNPT: GET '%s' href failed: %s", col_name, exc)
 
         # Fall back: Playwright click-download (handles onclick / JS redirects)
-        col_idx = {_COL_TAI_FILE: 11, _COL_TAI_BANG_KE: 12}.get(col_name)
+        col_idx = {_COL_TAI_FILE: 11}.get(col_name)
         selectors: list[str] = []
         if col_idx:
             selectors += [
@@ -299,6 +357,22 @@ def _classify_bytes(data: bytes) -> str | None:
     if data[:4] == b"%PDF":
         return "pdf"
     return None
+
+
+def _extract_xml_from_zip(zip_path: str) -> bytes | None:
+    """Open a ZIP file and return the bytes of the first .xml entry found."""
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            xml_names = [n for n in zf.namelist() if n.lower().endswith(".xml")]
+            if not xml_names:
+                logger.warning("VNPT: ZIP contains no .xml files: %s", zf.namelist())
+                return None
+            data = zf.read(xml_names[0])
+            logger.info("VNPT: extracted XML '%s' from zip (%d bytes)", xml_names[0], len(data))
+            return data
+    except zipfile.BadZipFile as exc:
+        logger.warning("VNPT: downloaded file is not a valid ZIP: %s", exc)
+        return None
 
 
 

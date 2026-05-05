@@ -61,7 +61,7 @@ def _collect_pairs(uid_temp: str) -> list[dict]:
 
 def _process_pair(pair: dict, email, had_zip: bool) -> None:
     """Parse one file pair, upload to MinIO, append invoice to DB."""
-    subject = email.subject or ""
+    subject = (email.subject or "") if email is not None else ""
     xml_bytes = pdf_bytes = None
 
     if "xml" in pair:
