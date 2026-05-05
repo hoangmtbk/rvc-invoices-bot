@@ -25,8 +25,9 @@ URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 #     re.compile(r"Mã bí mật[\s:]*([A-Z0-9_]+\*?$)", re.IGNORECASE),
 # ]
 REGEX_PATTERNS = [
-    re.compile(r"mã số.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"mã tra cứu hóa đơn.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"mã tra cứu.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"mã số tra cứu.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"mã nhận hóa đơn.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
     re.compile(r"mã bí mật.*?[\s:]*([A-Z0-9_]+\*?)\r?$", re.IGNORECASE | re.MULTILINE),
 ]
