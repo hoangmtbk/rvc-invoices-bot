@@ -51,6 +51,16 @@ def test_factory_easyinvoice_subdomain():
     assert isinstance(scraper, EasyInvoiceScraper)
 
 
+def test_factory_easyinvoice_vn_subdomain():
+    """easyinvoice.vn subdomains (e.g. <tax-code>hd.easyinvoice.vn) must also resolve."""
+    from scrapers.easyinvoice import EasyInvoiceScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get(
+        "http://0312668018hd.easyinvoice.vn/Invoice/ViewFromEmail?token=abc", page, "CODE"
+    )
+    assert isinstance(scraper, EasyInvoiceScraper)
+
+
 def test_factory_vnpt_subdomain():
     from scrapers.vnpt import VnptScraper
     page = MagicMock()

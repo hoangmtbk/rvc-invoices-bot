@@ -209,7 +209,18 @@ def _pick_best_url(urls: list[str]) -> str | None:
         except Exception:
             continue
     candidates = known if known else urls
-    return max(candidates, key=lambda u: len(urlparse(u).netloc.split(".")))
+
+    def _score(u: str) -> tuple:
+        parsed = urlparse(u)
+        # Prefer URLs with invoice-specific paths/tokens (highest priority)
+        is_invoice_url = 1 if DIRECT_LINK_RE.search(u) else 0
+        # Secondary: prefer URLs with longer paths (more specific than bare homepage)
+        path_score = len(parsed.path.rstrip("/").split("/")) + (1 if parsed.query else 0)
+        # Tertiary: netloc depth (as before)
+        netloc_depth = len(parsed.netloc.split("."))
+        return (is_invoice_url, path_score, netloc_depth)
+
+    return max(candidates, key=_score)
 
 
 def process_branch_web(email, download_dir: str) -> ScrapedResult | None:

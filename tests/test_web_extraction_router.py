@@ -261,6 +261,18 @@ def test_pick_best_url_prefers_subdomain_over_root():
     assert "0102362584001hd" in result
 
 
+def test_pick_best_url_prefers_token_url_over_homepage():
+    """Token/invoice URLs must beat bare homepages even if homepage has longer netloc."""
+    from web_extraction_router import _pick_best_url
+    urls = [
+        "https://easy-pit.easyinvoice.com.vn/",          # ads homepage — 5-part netloc
+        "http://0312668018hd.easyinvoice.vn/Invoice/ViewFromEmail?token=abc",  # real invoice
+        "https://easyinvoice.vn",                          # root homepage
+    ]
+    result = _pick_best_url(urls)
+    assert "ViewFromEmail" in result
+
+
 def test_pick_best_url_returns_none_for_empty():
     from web_extraction_router import _pick_best_url
     assert _pick_best_url([]) is None
