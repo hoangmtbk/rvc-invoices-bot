@@ -61,6 +61,26 @@ def test_factory_easyinvoice_vn_subdomain():
     assert isinstance(scraper, EasyInvoiceScraper)
 
 
+def test_factory_bkavehoadon_root():
+    """ehoadon.vn root domain must resolve to BKAVeHoadonScraper."""
+    from scrapers.bkavehoadon import BKAVeHoadonScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get(
+        "https://tchd.ehoadon.vn/TCHD?MTC=OSDPQI3MAKB", page, "OSDPQI3MAKB"
+    )
+    assert isinstance(scraper, BKAVeHoadonScraper)
+
+
+def test_factory_bkavehoadon_tracuu_subdomain():
+    """tracuu.ehoadon.vn is a subdomain — must also resolve."""
+    from scrapers.bkavehoadon import BKAVeHoadonScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get(
+        "http://tracuu.ehoadon.vn/OSDPQI3MAKB", page, "OSDPQI3MAKB"
+    )
+    assert isinstance(scraper, BKAVeHoadonScraper)
+
+
 def test_factory_vnpt_subdomain():
     from scrapers.vnpt import VnptScraper
     page = MagicMock()
@@ -565,3 +585,109 @@ def test_petrolimex_uid111_full_flow():
     mock_submit.assert_called_once()
     assert result.xml_bytes == xml_data
     assert result.pdf_bytes == pdf_data
+
+
+# ── BKAVeHoadon scraper tests ─────────────────────────────────────────────────
+
+from scrapers.bkavehoadon import BKAVeHoadonScraper
+
+
+def _make_bkav_page():
+    """Build a mock page that satisfies the BKAVeHoadon scraper flow."""
+    page = MagicMock()
+
+    # Iframe element attached in DOM
+    iframe_loc = MagicMock()
+    iframe_loc.count.return_value = 1
+
+    # Frame mock (returned by page.frame(name=...))
+    frame = MagicMock()
+    frame.url = "https://tchd.ehoadon.vn/Lookup?InvoiceGUID=abc"
+
+    # #btnDownload in the frame — visible
+    btn_dl = MagicMock()
+    btn_dl.count.return_value = 1
+    btn_dl.first.is_visible.return_value = True
+
+    # XML download link in frame — visible after hover
+    xml_link = MagicMock()
+    xml_link.count.return_value = 1
+    xml_link.first.is_visible.return_value = True
+
+    # PDF download link in frame — visible after hover
+    pdf_link = MagicMock()
+    pdf_link.count.return_value = 1
+    pdf_link.first.is_visible.return_value = True
+
+    def frame_locator(sel):
+        if "#btnDownload" in sel:
+            return btn_dl
+        if "LinkDownXML" in sel or "XML" in sel:
+            return xml_link
+        if "LinkDownPDF" in sel or "PDF" in sel:
+            return pdf_link
+        return MagicMock(count=MagicMock(return_value=0))
+
+    frame.locator.side_effect = frame_locator
+
+    def page_locator(sel):
+        if "frameViewInvoice" in sel:
+            return iframe_loc
+        return MagicMock(count=MagicMock(return_value=0))
+
+    page.locator.side_effect = page_locator
+    page.frame.return_value = frame
+    page.frames = [frame]
+    page.evaluate.return_value = "Hóa đơn ĐPH"
+    return page, frame
+
+
+def test_bkavehoadon_instantiation():
+    page = MagicMock()
+    s = BKAVeHoadonScraper(page, "https://tchd.ehoadon.vn/TCHD?MTC=CODE123", "CODE123")
+    assert s.lookup_code == "CODE123"
+
+
+def test_bkavehoadon_build_lookup_url_from_tracuu():
+    """tracuu.ehoadon.vn/CODE should be rewritten to tchd canonical URL."""
+    page = MagicMock()
+    s = BKAVeHoadonScraper(page, "http://tracuu.ehoadon.vn/OSDPQI3MAKB", "OSDPQI3MAKB")
+    assert s._build_lookup_url() == "https://tchd.ehoadon.vn/TCHD?MTC=OSDPQI3MAKB"
+
+
+def test_bkavehoadon_build_lookup_url_already_canonical():
+    """tchd URL with MTC should be returned unchanged."""
+    page = MagicMock()
+    url = "https://tchd.ehoadon.vn/TCHD?MTC=OSDPQI3MAKB"
+    s = BKAVeHoadonScraper(page, url, "OSDPQI3MAKB")
+    assert s._build_lookup_url() == url
+
+
+def test_bkavehoadon_scrape_success():
+    page, frame = _make_bkav_page()
+    xml_data = b"<?xml version='1.0'?><HDon/>"
+    pdf_data = b"%PDF-1.4 fake"
+
+    with patch.object(BKAVeHoadonScraper, "_download_from_frame",
+                      side_effect=[xml_data, pdf_data]):
+        s = BKAVeHoadonScraper(page, "https://tchd.ehoadon.vn/TCHD?MTC=CODE123", "CODE123")
+        result = s.scrape()
+
+    assert result.xml_bytes == xml_data
+    assert result.pdf_bytes == pdf_data
+
+
+def test_bkavehoadon_scrape_invoice_not_found():
+    page = MagicMock()
+    page.evaluate.return_value = "Không tìm thấy hóa đơn"
+    # No iframe attached
+    iframe_loc = MagicMock()
+    iframe_loc.count.return_value = 0
+    no_attach = MagicMock()
+    no_attach.wait_for.side_effect = Exception("timeout")
+    page.locator.return_value = no_attach
+
+    from scrapers.exceptions import InvoiceNotFoundException
+    s = BKAVeHoadonScraper(page, "https://tchd.ehoadon.vn/TCHD?MTC=BADCODE", "BADCODE")
+    with pytest.raises(InvoiceNotFoundException):
+        s.scrape()

@@ -5,14 +5,16 @@ from .exceptions import ScraperNotSupportedException
 
 
 def _get_registry() -> dict[str, type]:
+    from .bkavehoadon import BKAVeHoadonScraper
     from .easyinvoice import EasyInvoiceScraper
     from .misa import MisaScraper
     from .petrolimex import PetrolimexScraper
     from .viettel import ViettelScraper
     from .vnpt import VnptScraper
     return {
-        "easyinvoice.vn":               EasyInvoiceScraper,
-        "easyinvoice.com.vn":           EasyInvoiceScraper,
+        "ehoadon.vn":                       BKAVeHoadonScraper,
+        "easyinvoice.vn":                   EasyInvoiceScraper,
+        "easyinvoice.com.vn":               EasyInvoiceScraper,
         "meinvoice.vn":                     MisaScraper,
         "hoadon.petrolimex.com.vn":         PetrolimexScraper,
         "vietteltelecom.vn":                ViettelScraper,
