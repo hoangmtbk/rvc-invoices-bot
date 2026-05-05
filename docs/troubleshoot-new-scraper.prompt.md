@@ -2,7 +2,7 @@
 description: >
   Step-by-step troubleshooting workflow for building and debugging a new
   invoice scraper. Covers everything from email inspection to full end-to-end
-  validation, based on lessons learned from the Petrolimex scraper.
+  validation, based on lessons learned from the Petrolimex and VNPT scrapers.
 ---
 
 # New Scraper Troubleshoot Workflow
@@ -458,55 +458,45 @@ docker compose exec -T rvc-invoices-bot \
 
 ### Mode B — Direct URL + code (no email)
 
-```python
-#!/usr/bin/env python3
-"""Quick E2E without email: test scraper directly with url + lookup_code."""
-import sys, os, tempfile, logging
-sys.path.insert(0, "/app")
-from dotenv import load_dotenv; load_dotenv("/app/.env")
-
-logging.basicConfig(level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
-logger = logging.getLogger("e2e_direct")
-
-URL = sys.argv[1]          # e.g. "https://<domain>/invoice"
-CODE = sys.argv[2]         # e.g. "ABC123"
-
-from scrapers import scrape_invoice
-with tempfile.TemporaryDirectory() as tmpdir:
-    result = scrape_invoice(URL, CODE, download_dir=tmpdir)
-    logger.info("xml=%s pdf=%s",
-        f"{len(result.xml_bytes)}B" if result.xml_bytes else "none",
-        f"{len(result.pdf_bytes)}B" if result.pdf_bytes else "none")
-    assert result.xml_bytes or result.pdf_bytes, "No files downloaded"
-    logger.info("SUCCESS")
-```
+The script already exists at `scripts/e2e_direct.py` and supports an optional `--save-db` flag.
 
 ```bash
+# Download only
 docker compose exec -T rvc-invoices-bot \
     python /app/scripts/e2e_direct.py "https://<domain>/" "CODE123"
+
+# Download + save to DB (runs full router flow)
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/e2e_direct.py "https://<domain>/" "CODE123" --save-db
 ```
 
 **Expected success output:**
 ```
 INFO | e2e_direct | xml=6718B pdf=418416B
-INFO | e2e_direct | SUCCESS
+INFO | e2e_direct | SUCCESS (pass --save-db to also write to database)
 ```
 
 ---
 
 ## Phase 9 — Save to Database (Full Router Flow)
 
-Run the full router flow (parses XML, saves invoice record):
+If you have an email UID, run the full router flow:
 
 ```bash
 docker compose exec -T rvc-invoices-bot \
     python /app/scripts/e2e_petrolimex.py <uid>
 ```
 
+If testing directly (no email), use `--save-db`:
+
+```bash
+docker compose exec -T rvc-invoices-bot \
+    python /app/scripts/e2e_direct.py "https://<domain>/" "CODE123" --save-db
+```
+
 Expected final line:
 ```
-INFO | e2e | SUCCESS — invoice saved to database
+INFO | e2e_direct | SUCCESS — invoice saved to database
 ```
 
 ---
@@ -524,7 +514,7 @@ INFO | e2e | SUCCESS — invoice saved to database
 
 ---
 
-## Known Pitfalls (from Petrolimex debugging)
+## Known Pitfalls (from Petrolimex + VNPT debugging)
 
 | Pitfall | Symptom | Fix |
 |---------|---------|-----|
@@ -536,3 +526,6 @@ INFO | e2e | SUCCESS — invoice saved to database
 | `_MAX_RETRIES` set to 1 by mistake | Scraper gives up after first failed captcha | Always set `_MAX_RETRIES = 3` |
 | `triple_click()` removed in Playwright 1.59 | `AttributeError: triple_click` | Use `click(click_count=3)` |
 | `wait_until="networkidle"` too strict | Timeout on pages with background polling | Use `"domcontentloaded"` for initial load + explicit `wait_for(state="visible")` on key elements |
+| `expect_page` timeout — modal masquerading as popup | `ajxCall4Portal()` and similar JS functions open an **overlay modal on the same page**, not a new browser tab — `context.expect_page()` never fires | Inspect the button's `onclick` attribute in the debug script. If it calls a JS function rather than `window.open()`, assume same-page modal. Click the button, then `wait_for(state="visible")` on the modal content on the **current page**, then `expect_download` from the same page. |
+| Regex too broad — matches wrong field | `mã số` pattern matched "Mã số thuế" (tax code) before "Mã tra cứu hóa đơn" (lookup code) → wrong value extracted | Make patterns as specific as possible: use `mã số tra cứu` or the full label text, not a short prefix that appears in multiple fields. Test with `fetch_email_uid.py`. |
+| `router._process_pair` crashes with `email=None` | `AttributeError: 'NoneType' has no attribute 'subject'` when called from `e2e_direct.py` | Guard with `subject = (email.subject or "") if email is not None else ""` |
