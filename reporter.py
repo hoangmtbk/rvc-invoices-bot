@@ -18,7 +18,7 @@ def _send_telegram(message: str) -> None:
     try:
         resp = requests.post(
             _telegram_url(),
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"},
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": message},
             timeout=10,
         )
         resp.raise_for_status()
@@ -81,15 +81,22 @@ def send_daily_report() -> None:
         if len(err_yday) > 0:
             lines.append("")
             lines.append(f"⚠️ Lỗi xử lý: {len(err_yday)} email")
-            for _, row in err_yday.iterrows():
+            MAX_ERRORS = 10
+            shown = err_yday.head(MAX_ERRORS)
+            for _, row in shown.iterrows():
                 t = pd.to_datetime(row["error_date"]).strftime("%H:%M")
+                subject = str(row["email_subject"])[:60]
                 lines.append(
-                    f"- [{t}] Từ: {row['email_sender']} | "
-                    f"Tiêu đề: {row['email_subject']} | "
-                    f"Lỗi: {row['error_message']}"
+                    f"- [{t}] {subject} | {row['error_message']}"
                 )
+            if len(err_yday) > MAX_ERRORS:
+                lines.append(f"  ... và {len(err_yday) - MAX_ERRORS} lỗi khác")
     except Exception:
         pass
 
-    _send_telegram("\n".join(lines))
+    message = "\n".join(lines)
+    # Telegram max message length is 4096 chars
+    if len(message) > 4000:
+        message = message[:4000] + "\n... (đã cắt bớt)"
+    _send_telegram(message)
     logger.info(f"Daily report sent for {report_date}")
