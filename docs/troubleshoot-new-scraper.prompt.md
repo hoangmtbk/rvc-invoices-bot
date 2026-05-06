@@ -236,7 +236,7 @@ From the debug output, fill in this selector checklist:
 | `_CAPTCHA_IMG_SEL`      | Matches the captcha `<img>` — check `src` pattern                     |
 | `_CAPTCHA_INPUT_SEL`    | Matches the captcha text `<input>` — check `id` (e.g. `#captch` not `#captcha`) |
 | `_SUBMIT_SEL`           | **Must be `input[type="submit"]` first**. Check `tag=INPUT` not `BUTTON` |
-| `_DOWNLOAD_LINK_SEL`    | Matches all file download `<a>` links after result loads               |
+| `_DOWNLOAD_LINK_SEL`    | Matches all file download `<a>` or `<button>` links after result loads |
 
 **Submit selector pitfall (Petrolimex lesson):**
 The page may have `<button>` elements (tabs, navigation) that appear in DOM order **before** the real submit. A selector like `button` or `#form button` will match them first and do nothing. Always prefer:
@@ -248,6 +248,154 @@ _SUBMIT_SEL = (
     'input[type="submit"]'            # global fallback
 )
 ```
+
+**reCAPTCHA v2 detection:**
+If the page loads `https://www.google.com/recaptcha/api.js`, it uses reCAPTCHA v2 — **not** an image captcha. The sitekey is embedded in the iframe URL:
+```
+https://www.google.com/recaptcha/api2/anchor?ar=1&k=<SITE_KEY>&...
+```
+Extract it from `page.frames`:
+```python
+for f in page.frames:
+    if "recaptcha/api2/anchor" in f.url:
+        import re
+        m = re.search(r"[?&]k=([^&]+)", f.url)
+        print("sitekey:", m.group(1) if m else "not found")
+```
+Also confirm `window.___grecaptcha_cfg.clients` exists (used for token injection).
+
+---
+
+## Phase 4b — reCAPTCHA v2 with Capsolver
+
+When the site uses reCAPTCHA v2 (checkbox "Tôi không phải là người máy"), the image-captcha `capsolver_solve_image()` approach does **not** apply. Instead:
+
+### Step 1 — Solve via Capsolver `ReCaptchaV2TaskProxyLess`
+
+```python
+import os, time, requests
+
+def _capsolver_recaptcha_v2(site_key: str, page_url: str) -> str | None:
+    api_key = os.environ.get("CAPSOLVER_API_KEY", "")
+    if not api_key:
+        return None
+    create = requests.post(
+        "https://api.capsolver.com/createTask",
+        json={"clientKey": api_key, "task": {
+            "type": "ReCaptchaV2TaskProxyLess",
+            "websiteURL": page_url,
+            "websiteKey": site_key,
+        }},
+        timeout=15,
+    ).json()
+    if create.get("errorId", 0) != 0:
+        return None
+    task_id = create["taskId"]
+    for _ in range(60):
+        time.sleep(2)
+        result = requests.post(
+            "https://api.capsolver.com/getTaskResult",
+            json={"clientKey": api_key, "taskId": task_id},
+            timeout=10,
+        ).json()
+        if result.get("status") == "ready":
+            return result.get("solution", {}).get("gRecaptchaResponse", "")
+        if result.get("status") not in ("processing", "idle", None):
+            return None
+    return None
+```
+
+Typical solve time: **10–40 seconds**.
+
+### Step 2 — Find the React/JS success callback
+
+The reCAPTCHA widget registers a callback in `window.___grecaptcha_cfg.clients[0]`.
+The path is **always** `clients[0].T.T.callback` (a 1-argument function). Verify in a debug script:
+
+```python
+result = page.evaluate("""() => {
+    const cfg = window.___grecaptcha_cfg;
+    if (!cfg || !cfg.clients) return 'no clients';
+    const c = cfg.clients[0];
+    const funcs = [];
+    function scan(obj, path, depth) {
+        if (depth > 5 || !obj || typeof obj !== 'object') return;
+        for (const k of Object.keys(obj)) {
+            const v = obj[k];
+            if (typeof v === 'function')
+                funcs.push('FUNC ' + path + '.' + k + ' len=' + v.length);
+            else if (v && typeof v === 'object')
+                scan(v, path + '.' + k, depth + 1);
+        }
+    }
+    scan(c, 'clients[0]', 0);
+    return funcs;
+}""")
+# Look for: FUNC clients[0].T.T.callback len=1
+```
+
+> **Note:** The path letters (`T`, `T`) are minified and may differ across sites/versions, but the pattern is a 1-argument function named `callback` near the sitekey. Verify before hardcoding.
+
+### Step 3 — Inject token via the callback
+
+```python
+def _inject_token(self, token: str) -> None:
+    self.page.evaluate(
+        """(token) => {
+            // 1. Set hidden textarea (belt-and-suspenders)
+            const ta = document.getElementById('g-recaptcha-response');
+            if (ta) { ta.value = token; }
+            // 2. Call the reCAPTCHA success callback to trigger React onChange
+            try {
+                const cfg = window.___grecaptcha_cfg;
+                if (cfg && cfg.clients && cfg.clients[0] &&
+                        cfg.clients[0].T && cfg.clients[0].T.T) {
+                    const cb = cfg.clients[0].T.T.callback;
+                    if (typeof cb === 'function') { cb(token); }
+                }
+            } catch (e) {}
+        }""",
+        token,
+    )
+```
+
+After injection, verify the submit button is **no longer disabled**:
+```python
+disabled = page.locator("button:has-text('Tra cứu hóa đơn')").first.evaluate("e => e.disabled")
+assert not disabled, "submit still disabled — callback path wrong"
+```
+
+### Step 4 — Scraper structure for reCAPTCHA v2
+
+Unlike image-captcha scrapers (which retry with `page.reload()`), the reCAPTCHA v2 flow must re-navigate on each attempt because the widget state is tied to the page load:
+
+```python
+for attempt in range(_MAX_RETRIES):
+    self.page.goto(_BASE_URL, wait_until="networkidle")
+    self._delay(1.0, 2.0)
+
+    self._enter_code()
+
+    token = _capsolver_recaptcha_v2(_SITE_KEY, _BASE_URL)
+    if not token:
+        if attempt < _MAX_RETRIES - 1:
+            continue
+        raise CaptchaRequiredException(...)
+
+    self._inject_token(token)
+    self._delay(0.3, 0.7)
+
+    btn = self.page.locator(_SUBMIT_SEL).first
+    if btn.evaluate("e => e.disabled"):
+        if attempt < _MAX_RETRIES - 1:
+            continue
+        raise CaptchaRequiredException(...)
+
+    btn.hover(); self._delay(0.2, 0.5); btn.click()
+    # wait for result modal / download links ...
+```
+
+**Real example:** `scrapers/cmcinvoice.py` — CMC Telecom portal (cinvoice.cmctelecom.vn).
 
 ---
 
@@ -504,9 +652,11 @@ INFO | e2e_direct | SUCCESS — invoice saved to database
 ## Checklist
 
 - [ ] `fetch_email_uid.py <uid>` → code and URL extracted correctly
+- [ ] If code uses non-alphanumeric chars (e.g. `CTEL.…`) → verify `_extract_code_from_table()` picks it up (not `REGEX_PATTERNS`)
 - [ ] Domain added to `scrapers/factory.py`
 - [ ] `debug_<newsite>.py` run — all selectors verified in output
-- [ ] `_SUBMIT_SEL` confirmed to match `tag=INPUT type="submit"` (not `BUTTON`)
+- [ ] **Image captcha sites:** `_SUBMIT_SEL` confirmed to match `tag=INPUT type="submit"` (not `BUTTON`)
+- [ ] **reCAPTCHA v2 sites:** sitekey extracted from anchor-iframe URL; `clients[0].T.T.callback` path confirmed in debug script; submit button enabled after `_inject_token()`
 - [ ] Scraper class created in `scrapers/<newsite>.py`
 - [ ] `pytest -k <newsite>` — all tests pass
 - [ ] E2E script downloads XML + PDF
@@ -529,3 +679,40 @@ INFO | e2e_direct | SUCCESS — invoice saved to database
 | `expect_page` timeout — modal masquerading as popup | `ajxCall4Portal()` and similar JS functions open an **overlay modal on the same page**, not a new browser tab — `context.expect_page()` never fires | Inspect the button's `onclick` attribute in the debug script. If it calls a JS function rather than `window.open()`, assume same-page modal. Click the button, then `wait_for(state="visible")` on the modal content on the **current page**, then `expect_download` from the same page. |
 | Regex too broad — matches wrong field | `mã số` pattern matched "Mã số thuế" (tax code) before "Mã tra cứu hóa đơn" (lookup code) → wrong value extracted | Make patterns as specific as possible: use `mã số tra cứu` or the full label text, not a short prefix that appears in multiple fields. Test with `fetch_email_uid.py`. |
 | `router._process_pair` crashes with `email=None` | `AttributeError: 'NoneType' has no attribute 'subject'` when called from `e2e_direct.py` | Guard with `subject = (email.subject or "") if email is not None else ""` |
+| Lookup code uses a non-alphanumeric prefix (e.g. `CTEL.…`) | `REGEX_PATTERNS` patterns only capture `[A-Z0-9_]+` — the dot separator causes mismatch; `fetch_email_uid.py` returns `code = None` | Use `_extract_code_from_table()` (table-aware BeautifulSoup scan) instead of adding a custom regex. The code is always the sibling `<td>` of the "Mã tra cứu" label cell. See below. |
+| `_extract_code_from_table` returns wrong cell (layout wrapper) | The function picks up the text of a sibling layout cell (e.g. QR caption or "Mẫu số:") instead of the actual code | Use `recursive=False` on `find_all("td")` **and** skip any cell that itself contains a nested `<td>` (`if td.find("td"): continue`). This ensures only leaf cells match. |
+
+### Lookup code not captured by `REGEX_PATTERNS` — use table scan
+
+When the email body embeds the code in an HTML table like:
+```html
+<tr>
+  <td><b>Mã tra cứu:</b></td>
+  <td><b>CTEL.50A742E6A1F81205E0630E01040AB7A2</b></td>
+</tr>
+```
+`REGEX_PATTERNS` won't match because the label and value are in separate cells (different lines after `get_text()`), and the code may contain characters outside `[A-Z0-9_]`.
+
+**The fix is already in `_extract_lookup_code`** via `_extract_code_from_table()`:
+```python
+# web_extraction_router.py
+_LOOKUP_LABEL_RE = re.compile(r"mã\s+tra\s+cứu", re.IGNORECASE)
+
+def _extract_code_from_table(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    for tr in soup.find_all("tr"):
+        cells = tr.find_all("td", recursive=False)   # direct children only
+        for i, td in enumerate(cells):
+            if td.find("td"):   # skip layout wrapper cells
+                continue
+            if _LOOKUP_LABEL_RE.search(td.get_text()):
+                if i + 1 < len(cells):
+                    next_td = cells[i + 1]
+                    if next_td.find("td"):  # skip if value cell is also a wrapper
+                        continue
+                    code = next_td.get_text(strip=True)
+                    if code:
+                        return code
+    return None
+```
+This handles any code format without touching `REGEX_PATTERNS`.
