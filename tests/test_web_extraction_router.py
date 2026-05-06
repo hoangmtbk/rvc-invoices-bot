@@ -72,8 +72,28 @@ def test_try_direct_download_returns_none_on_request_failure():
 
 
 def test_extract_lookup_code_misa_pattern():
+    """MISA emails with mã số tra cứu pattern should extract code."""
     from web_extraction_router import _extract_lookup_code
-    assert _extract_lookup_code("mã số: ABC123XYZ") == "ABC123XYZ"
+    assert _extract_lookup_code("mã số tra cứu: ABC123XYZ") == "ABC123XYZ"
+
+
+def test_extract_lookup_code_misa_sc_param_from_url():
+    """MISA emails embed the code as sc= in the meinvoice.vn URL."""
+    from web_extraction_router import _extract_lookup_code
+    html = (
+        'href="https://www.meinvoice.vn/tra-cuu/?sc=GJF0HED59BA6&amp;m=ketoan@rvc.net.vn'
+        '&amp;n=&amp;c=&amp;b=&amp;d=0&amp;t=1&amp;r=1"'
+    )
+    assert _extract_lookup_code(html) == "GJF0HED59BA6"
+
+
+def test_extract_urls_html_unescapes_ampersand():
+    """URLs with &amp; in HTML email bodies should be returned as & after unescape."""
+    from web_extraction_router import _extract_urls
+    html = 'href="https://www.meinvoice.vn/tra-cuu/?sc=GJF0HED59BA6&amp;m=ketoan@rvc.net.vn"'
+    urls = _extract_urls(html)
+    assert any("&m=ketoan" in u for u in urls), f"Expected unescaped URL, got: {urls}"
+    assert not any("&amp;" in u for u in urls), f"Should not contain &amp;: {urls}"
 
 
 def test_extract_lookup_code_common_pattern():

@@ -1,4 +1,5 @@
 import base64
+import html as _html
 import logging
 import os
 import re
@@ -111,7 +112,8 @@ def extract_direct_link(
 
 
 def _extract_urls(text: str) -> list[str]:
-    return URL_RE.findall(text or "")
+    # HTML-unescape so &amp; → & in URLs extracted from HTML email bodies
+    return [_html.unescape(u) for u in URL_RE.findall(text or "")]
 
 
 _LOOKUP_LABEL_RE = re.compile(r"m\u00e3\s*tra\s*c\u1ee9u", re.IGNORECASE)
@@ -143,6 +145,14 @@ def _extract_code_from_table(html: str) -> str | None:
 
 
 def _extract_lookup_code(text: str) -> str | None:
+    # Tier -1: MISA meinvoice — extract sc= param from direct URL in email
+    if "meinvoice.vn" in (text or ""):
+        sc_match = re.search(
+            r"meinvoice\.vn[^""'\s<>]*\?sc=([A-Z0-9]+)", text, re.IGNORECASE
+        )
+        if sc_match:
+            return sc_match.group(1)
+
     # Tier 0: structure-aware table scan (works for any code format incl. CTEL.)
     if "<" in (text or ""):
         code = _extract_code_from_table(text)

@@ -97,7 +97,45 @@ def test_factory_meinvoice():
     assert isinstance(scraper, MisaScraper)
 
 
-def test_factory_unknown_raises():
+def test_factory_meinvoice_sc_url():
+    """Factory must match full sc= URL (www subdomain) for MISA emails."""
+    from scrapers.misa import MisaScraper
+    page = MagicMock()
+    scraper = ScraperFactory.get(
+        "https://www.meinvoice.vn/tra-cuu/?sc=GJF0HED59BA6&m=ketoan@rvc.net.vn",
+        page,
+        "GJF0HED59BA6",
+    )
+    assert isinstance(scraper, MisaScraper)
+
+
+def test_misa_scraper_uses_dispatch_event(tmp_path):
+    """MisaScraper._download_item dispatches click and returns file bytes."""
+    from scrapers.misa import MisaScraper
+
+    mock_page = MagicMock()
+    mock_loc = MagicMock()
+    mock_loc.count.return_value = 1
+
+    fake_dl_ctx_obj = MagicMock()
+    # dl.value.path() is the Playwright pattern
+    fake_dl_ctx_obj.value.path.return_value = str(tmp_path / "invoice.xml")
+    (tmp_path / "invoice.xml").write_bytes(b"<?xml version='1.0'?><HDon/>")
+
+    mock_dl_ctx = MagicMock()
+    mock_dl_ctx.__enter__ = MagicMock(return_value=fake_dl_ctx_obj)
+    mock_dl_ctx.__exit__ = MagicMock(return_value=False)
+    mock_page.expect_download.return_value = mock_dl_ctx
+    mock_page.locator.return_value = mock_loc
+
+    scraper = MisaScraper(mock_page, "https://www.meinvoice.vn/tra-cuu/?sc=CODE", "CODE")
+    result = scraper._download_item("div.txt-download-xml")
+
+    mock_loc.first.dispatch_event.assert_called_once_with("click")
+    assert result == b"<?xml version='1.0'?><HDon/>"
+
+
+
     page = MagicMock()
     with pytest.raises(ScraperNotSupportedException):
         ScraperFactory.get("https://unknown-provider.vn/invoice", page, "CODE")
