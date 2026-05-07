@@ -114,9 +114,10 @@ def export():
         lines.append(",".join(f'"{str(v or "").replace(chr(34), chr(34)*2)}"' for v in row))
 
     date_str = datetime.now().strftime("%Y%m%d")
+    content = "\n".join(lines).encode("utf-8-sig")  # BOM required for Excel to detect UTF-8
     return Response(
-        "\n".join(lines),
-        mimetype="text/csv; charset=utf-8",
+        content,
+        mimetype="text/csv; charset=utf-8-sig",
         headers={
             "Content-Disposition": f"attachment; filename=hoa_don_{date_str}.csv"
         },
