@@ -335,7 +335,7 @@ Expected: Same count as source (recorded in Task 3 Step 3).
 
 ```bash
 ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
-  "docker exec rvc-minio mc alias set local http://localhost:9000 myminio '***REMOVED***' 2>/dev/null && \
+  "docker exec rvc-minio mc alias set local http://localhost:9000 myminio \"$MINIO_SECRET_KEY\" 2>/dev/null && \
    docker exec rvc-minio mc ls local/rvc-invoices --summarize 2>/dev/null | tail -5"
 ```
 
