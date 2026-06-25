@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move the entire `rvc-invoices-bot` Docker Compose stack from the current host to `***REMOVED_IP***` with full data integrity during an active maintenance window.
+**Goal:** Move the entire `rvc-invoices-bot` Docker Compose stack from the current host to `<TARGET_HOST_IP>` with full data integrity during an active maintenance window.
 
 **Architecture:** rsync source code to target, then stream each Docker volume via tar pipe over SSH using an Alpine container (no root required, no intermediate files), then build images and start the stack on the target.
 
 **Tech Stack:** Docker Compose v5.1.3, rsync, SSH key `~/.ssh/id_rsa`, Alpine (busybox tar), Python 3.11-slim, Playwright, MinIO, Traefik v3.
 
-**Current state:** Source containers stopped (`docker compose down` already run). DNS A records for all 3 domains already pointing to `***REMOVED_IP***`. Maintenance window is active — move fast.
+**Current state:** Source containers stopped (`docker compose down` already run). DNS A records for all 3 domains already pointing to `<TARGET_HOST_IP>`. Maintenance window is active — move fast.
 
 ---
 
@@ -19,7 +19,7 @@
 - [ ] **Step 1: Confirm SSH access to target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** "echo 'SSH OK' && docker version --format '{{.Server.Version}}'"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> "echo 'SSH OK' && docker version --format '{{.Server.Version}}'"
 ```
 
 Expected output:
@@ -33,7 +33,7 @@ If SSH fails: check that `~/.ssh/id_rsa` exists and has correct permissions (`ch
 - [ ] **Step 2: Confirm Docker Compose on target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** "docker compose version"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> "docker compose version"
 ```
 
 Expected:
@@ -44,7 +44,7 @@ Docker Compose version v2.x.x
 - [ ] **Step 3: Confirm disk space on target (need ~1 GB for all volumes + images)**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** "df -h /"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> "df -h /"
 ```
 
 Expected: At least 2 GB available. Target currently has 112 GB free — confirmed OK.
@@ -77,12 +77,12 @@ local     rvc-invoices-bot_minio_data
 
 **Files:**
 - Source: `/home/ai/rvc-invoices-bot/` (entire project)
-- Target: `/home/rvc-user/rvc-invoices-bot/`
+- Target: `/home/<TARGET_USER>/rvc-invoices-bot/`
 
 - [ ] **Step 1: Create project directory on target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** "mkdir -p /home/rvc-user/rvc-invoices-bot"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> "mkdir -p /home/<TARGET_USER>/rvc-invoices-bot"
 ```
 
 - [ ] **Step 2: rsync project files to target**
@@ -96,7 +96,7 @@ rsync -avz \
   --exclude='temp/' \
   -e "ssh -i ~/.ssh/id_rsa" \
   /home/ai/rvc-invoices-bot/ \
-  rvc-user@***REMOVED_IP***:/home/rvc-user/rvc-invoices-bot/
+  <TARGET_USER>@<TARGET_HOST_IP>:/home/<TARGET_USER>/rvc-invoices-bot/
 ```
 
 Expected: rsync output listing transferred files, ending with transfer rate summary. The `.env` file is included — no separate copy needed.
@@ -104,8 +104,8 @@ Expected: rsync output listing transferred files, ending with transfer rate summ
 - [ ] **Step 3: Verify key files arrived on target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
-  "ls /home/rvc-user/rvc-invoices-bot/ && echo '---' && head -3 /home/rvc-user/rvc-invoices-bot/.env"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
+  "ls /home/<TARGET_USER>/rvc-invoices-bot/ && echo '---' && head -3 /home/<TARGET_USER>/rvc-invoices-bot/.env"
 ```
 
 Expected: directory listing including `docker-compose.yml`, `Dockerfile`, `Dockerfile.web`, `.env`, `main.py`, `requirements.txt`, `requirements.web.txt`.
@@ -122,7 +122,7 @@ Expected: directory listing including `docker-compose.yml`, `Dockerfile`, `Docke
 docker run --rm \
   -v rvc-invoices-bot_invoices_data:/data \
   alpine tar czf - /data \
-| ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+| ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker volume create rvc-invoices-bot_invoices_data && \
    docker run --rm -i -v rvc-invoices-bot_invoices_data:/data alpine tar xzf - -C /"
 ```
@@ -132,7 +132,7 @@ Expected: No output on success. Takes ~2 seconds (volume is ~16 KB).
 - [ ] **Step 2: Verify SQLite DB arrived on target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker run --rm -v rvc-invoices-bot_invoices_data:/data alpine ls -lh /data/"
 ```
 
@@ -150,7 +150,7 @@ docker run --rm \
 
 Then check target:
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker run --rm -v rvc-invoices-bot_invoices_data:/data python:3.11-slim \
    python -c \"import sqlite3; c=sqlite3.connect('/data/invoices.db'); print('Target count:', c.execute('SELECT COUNT(*) FROM invoices').fetchone()[0])\""
 ```
@@ -169,7 +169,7 @@ Expected: Both counts identical.
 docker run --rm \
   -v rvc-invoices-bot_invoices_logs:/data \
   alpine tar czf - /data \
-| ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+| ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker volume create rvc-invoices-bot_invoices_logs && \
    docker run --rm -i -v rvc-invoices-bot_invoices_logs:/data alpine tar xzf - -C /"
 ```
@@ -179,7 +179,7 @@ Expected: No output on success. Takes ~2 seconds (small volume).
 - [ ] **Step 2: Verify logs arrived on target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker run --rm -v rvc-invoices-bot_invoices_logs:/data alpine ls -lh /data/"
 ```
 
@@ -197,7 +197,7 @@ Expected: `bot.log` listed (may be empty or contain prior log lines).
 docker run --rm \
   -v rvc-invoices-bot_minio_data:/data \
   alpine tar czf - /data \
-| ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+| ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker volume create rvc-invoices-bot_minio_data && \
    docker run --rm -i -v rvc-invoices-bot_minio_data:/data alpine tar xzf - -C /"
 ```
@@ -207,7 +207,7 @@ Expected: No output on success. Wait patiently — 224 MB compressed over LAN ta
 - [ ] **Step 2: Verify MinIO data size on target**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker run --rm -v rvc-invoices-bot_minio_data:/data alpine du -sh /data/"
 ```
 
@@ -225,7 +225,7 @@ Expected: Size close to `223.8M` (within a few KB difference due to compression)
 docker run --rm \
   -v rvc-invoices-bot_letsencrypt:/data \
   alpine tar czf - /data \
-| ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+| ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker volume create rvc-invoices-bot_letsencrypt && \
    docker run --rm -i -v rvc-invoices-bot_letsencrypt:/data alpine tar xzf - -C /"
 ```
@@ -235,7 +235,7 @@ Expected: No output on success. Takes ~1 second (tiny file).
 - [ ] **Step 2: Verify acme.json exists on target and has correct permissions**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker run --rm -v rvc-invoices-bot_letsencrypt:/data alpine ls -lh /data/"
 ```
 
@@ -247,12 +247,12 @@ Expected: `acme.json` listed with size > 0 bytes.
 
 ### Task 7: Build images and start the stack on target
 
-**Files:** `/home/rvc-user/rvc-invoices-bot/docker-compose.yml` on target.
+**Files:** `/home/<TARGET_USER>/rvc-invoices-bot/docker-compose.yml` on target.
 
 - [ ] **Step 1: Pull base images on target (speeds up build)**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker pull python:3.11-slim && docker pull traefik:v3.6.14 && docker pull minio/minio"
 ```
 
@@ -261,8 +261,8 @@ Expected: Pull progress bars, ending with "Status: Image is up to date" or "Down
 - [ ] **Step 2: Build and start the stack**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
-  "cd /home/rvc-user/rvc-invoices-bot && docker compose up --build -d"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
+  "cd /home/<TARGET_USER>/rvc-invoices-bot && docker compose up --build -d"
 ```
 
 Expected output (order may vary):
@@ -281,7 +281,7 @@ Build takes ~3–5 minutes (Playwright + Chromium install is the slow step in `D
 - [ ] **Step 3: Confirm all 4 containers are running**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
 ```
 
@@ -305,7 +305,7 @@ If any container is in `Restarting` or `Exited` state: `docker logs <container-n
 - [ ] **Step 1: Check bot startup logs (no errors)**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker logs rvc-invoices-bot --tail 40"
 ```
 
@@ -314,7 +314,7 @@ Expected: Lines like `[INFO] Starting email poller`, `[INFO] Connected to MinIO`
 - [ ] **Step 2: Check web UI responds internally**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker exec rvc-invoices-web curl -s -o /dev/null -w '%{http_code}' http://localhost:8080"
 ```
 
@@ -323,7 +323,7 @@ Expected: `200` or `302` (redirect to login).
 - [ ] **Step 3: Verify SQLite invoice count on running container**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker exec rvc-invoices-bot python -c \
    \"import sqlite3; c=sqlite3.connect('/app/data/invoices.db'); \
    print('Invoices in DB:', c.execute('SELECT COUNT(*) FROM invoices').fetchone()[0])\""
@@ -334,7 +334,7 @@ Expected: Same count as source (recorded in Task 3 Step 3).
 - [ ] **Step 4: Verify MinIO bucket exists and has objects**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker exec rvc-minio mc alias set local http://localhost:9000 myminio \"$MINIO_SECRET_KEY\" 2>/dev/null && \
    docker exec rvc-minio mc ls local/rvc-invoices --summarize 2>/dev/null | tail -5"
 ```
@@ -344,7 +344,7 @@ Expected: Object listing with file count and total size close to 224 MB.
 - [ ] **Step 5: Verify HTTPS via domain (DNS already pointing to new host)**
 
 ```bash
-curl -I https://hddt.rvctel.vn
+curl -I https://hddt.<TARGET_DOMAIN>
 ```
 
 Expected:
@@ -358,7 +358,7 @@ No certificate errors. If you get a cert error: wait 30–60 seconds for Traefik
 - [ ] **Step 6: Verify MinIO HTTPS endpoint**
 
 ```bash
-curl -I https://rvc-s3.rvctel.vn
+curl -I https://rvc-s3.<TARGET_DOMAIN>
 ```
 
 Expected: `HTTP/2 200` or `403` (MinIO health check — both mean TLS is working).
@@ -366,7 +366,7 @@ Expected: `HTTP/2 200` or `403` (MinIO health check — both mean TLS is working
 - [ ] **Step 7: Verify MinIO console**
 
 ```bash
-curl -I https://rvc-s3-console.rvctel.vn
+curl -I https://rvc-s3-console.<TARGET_DOMAIN>
 ```
 
 Expected: `HTTP/2 200`.
@@ -380,7 +380,7 @@ Expected: `HTTP/2 200`.
 - [ ] **Step 1: Watch bot logs for one full email poll cycle (15 min)**
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker logs rvc-invoices-bot -f --since 5m"
 ```
 
@@ -391,7 +391,7 @@ Wait for a log line like `[INFO] Polling mailbox...` or `[INFO] No new emails`. 
 Check the Telegram bot received any message (startup notification or first poll report). If you don't see a message within 15 minutes, check:
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker logs rvc-invoices-bot 2>&1 | grep -i telegram"
 ```
 
@@ -409,11 +409,11 @@ Source containers are already stopped. Source volumes remain on the current host
 - [ ] **Step 4: Confirm migration complete**
 
 Final checklist:
-- [ ] All 4 containers running on `***REMOVED_IP***`
+- [ ] All 4 containers running on `<TARGET_HOST_IP>`
 - [ ] Invoice count in DB matches source
 - [ ] MinIO objects intact (~224 MB)
-- [ ] `https://hddt.rvctel.vn` loads correctly with valid TLS
-- [ ] `https://rvc-s3.rvctel.vn` responds with valid TLS
-- [ ] `https://rvc-s3-console.rvctel.vn` responds with valid TLS
+- [ ] `https://hddt.<TARGET_DOMAIN>` loads correctly with valid TLS
+- [ ] `https://rvc-s3.<TARGET_DOMAIN>` responds with valid TLS
+- [ ] `https://rvc-s3-console.<TARGET_DOMAIN>` responds with valid TLS
 - [ ] Bot successfully polled email at least once
 - [ ] Telegram notification received

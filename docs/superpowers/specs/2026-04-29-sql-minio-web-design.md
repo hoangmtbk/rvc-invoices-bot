@@ -83,7 +83,7 @@ New module wrapping the MinIO Python client.
 
 - Bucket: `rvc-invoices` (auto-created on first bot startup)
 - Bucket policy: public read — permanent URLs, no expiry
-- URL format: `https://rvc-s3.rvctel.vn/rvc-invoices/<filename>`
+- URL format: `https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/<filename>`
 
 ### File naming convention
 
@@ -312,17 +312,17 @@ MINIO_SECRET_KEY=your_secret_key
 MINIO_ROOT_USER=your_access_key          # same value as MINIO_ACCESS_KEY
 MINIO_ROOT_PASSWORD=your_secret_key      # same value as MINIO_SECRET_KEY
 MINIO_BUCKET=rvc-invoices
-MINIO_PUBLIC_URL=https://rvc-s3.rvctel.vn
+MINIO_PUBLIC_URL=https://rvc-s3.<TARGET_DOMAIN>
 
 # Web UI
 WEB_PORT=8080
 WEB_SECRET=your_secret_token_here
 
 # Traefik
-ACME_EMAIL=admin@rvctel.vn
-DOMAIN_WEB=hddt.rvctel.vn
-DOMAIN_MINIO=rvc-s3.rvctel.vn
-DOMAIN_MINIO_CONSOLE=rvc-s3-console.rvctel.vn
+ACME_EMAIL=admin@<TARGET_DOMAIN>
+DOMAIN_WEB=hddt.<TARGET_DOMAIN>
+DOMAIN_MINIO=rvc-s3.<TARGET_DOMAIN>
+DOMAIN_MINIO_CONSOLE=rvc-s3-console.<TARGET_DOMAIN>
 ```
 
 MinIO container reads `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` — set these to the same values as `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` in `.env`.

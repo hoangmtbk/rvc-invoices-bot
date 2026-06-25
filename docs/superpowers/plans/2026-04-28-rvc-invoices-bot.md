@@ -73,9 +73,9 @@ pytest-mock>=3.12.0
 - [ ] **Step 1.3: Write `.env.example`**
 
 ```env
-IMAP_SERVER=mail.rvctel.vn
+IMAP_SERVER=mail.<TARGET_DOMAIN>
 IMAP_PORT=993
-IMAP_USER=invoices_bot@rvctel.vn
+IMAP_USER=invoices_bot@<TARGET_DOMAIN>
 IMAP_PASSWORD=your_imap_password_here
 
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -92,9 +92,9 @@ RVC_TAX_CODE=0313028740
 - [ ] **Step 1.4: Write `.env`** (real credentials, never committed)
 
 ```env
-IMAP_SERVER=mail.rvctel.vn
+IMAP_SERVER=mail.<TARGET_DOMAIN>
 IMAP_PORT=993
-IMAP_USER=invoices_bot@rvctel.vn
+IMAP_USER=invoices_bot@<TARGET_DOMAIN>
 IMAP_PASSWORD=your_imap_password_here
 
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -258,7 +258,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-IMAP_SERVER = os.getenv("IMAP_SERVER", "mail.rvctel.vn")
+IMAP_SERVER = os.getenv("IMAP_SERVER", "mail.<TARGET_DOMAIN>")
 IMAP_PORT = int(os.getenv("IMAP_PORT", "993"))
 IMAP_USER = os.getenv("IMAP_USER", "")
 IMAP_PASSWORD = os.getenv("IMAP_PASSWORD", "")

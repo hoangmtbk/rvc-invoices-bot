@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-An automated bot that watches a dedicated mailbox (`invoices_bot@rvctel.vn`) for Vietnamese e-invoice emails, extracts invoice data from multiple source formats (XML, ZIP, PDF, web portal), stores it in a unified CSV, and sends a daily Telegram summary report. The system runs as a single Docker container with a 15-minute IMAP polling loop.
+An automated bot that watches a dedicated mailbox (`invoices_bot@<TARGET_DOMAIN>`) for Vietnamese e-invoice emails, extracts invoice data from multiple source formats (XML, ZIP, PDF, web portal), stores it in a unified CSV, and sends a daily Telegram summary report. The system runs as a single Docker container with a 15-minute IMAP polling loop.
 
 ---
 
@@ -76,7 +76,7 @@ All branches call `storage.append_to_csv(invoice_dict)` on success.
 
 ## 4. Module 1 — Email Watcher (`email_handler.py`)
 
-- Connect to `mail.rvctel.vn:993` via IMAPS (SSL/TLS) using `imap_tools`.
+- Connect to `mail.<TARGET_DOMAIN>:993` via IMAPS (SSL/TLS) using `imap_tools`.
 - Fetch `UNSEEN` emails where subject contains any of (case-insensitive):
   - `"hóa đơn điện tử"`, `"hóa đơn"`, `"hddt"`
 - Return list of email objects with: uid, subject, body text, attachments.
@@ -219,9 +219,9 @@ INVOICE_COLUMNS = [
 ## 8. Configuration (`.env`)
 
 ```env
-IMAP_SERVER=mail.rvctel.vn
+IMAP_SERVER=mail.<TARGET_DOMAIN>
 IMAP_PORT=993
-IMAP_USER=invoices_bot@rvctel.vn
+IMAP_USER=invoices_bot@<TARGET_DOMAIN>
 IMAP_PASSWORD=your_imap_password_here
 
 GEMINI_API_KEY=your_gemini_api_key_here

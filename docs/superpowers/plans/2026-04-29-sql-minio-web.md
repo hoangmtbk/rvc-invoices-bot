@@ -70,7 +70,7 @@ def test_config_constants():
         "MINIO_ACCESS_KEY": "minioadmin",
         "MINIO_SECRET_KEY": "minioadmin",
         "MINIO_BUCKET": "rvc-invoices",
-        "MINIO_PUBLIC_URL": "https://rvc-s3.rvctel.vn",
+        "MINIO_PUBLIC_URL": "https://rvc-s3.<TARGET_DOMAIN>",
         "WEB_PORT": "8080",
         "WEB_SECRET": "testsecret",
     }, clear=True):
@@ -81,7 +81,7 @@ def test_config_constants():
         assert config.DB_PATH.endswith("invoices.db")
         assert config.MINIO_ENDPOINT == "rvc-minio:9000"
         assert config.MINIO_BUCKET == "rvc-invoices"
-        assert config.MINIO_PUBLIC_URL == "https://rvc-s3.rvctel.vn"
+        assert config.MINIO_PUBLIC_URL == "https://rvc-s3.<TARGET_DOMAIN>"
         assert config.WEB_PORT == 8080
         assert config.WEB_SECRET == "testsecret"
         assert config.LOG_FILE.endswith("bot.log")
@@ -104,7 +104,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-IMAP_SERVER: str = os.getenv("IMAP_SERVER", "mail.rvctel.vn")
+IMAP_SERVER: str = os.getenv("IMAP_SERVER", "mail.<TARGET_DOMAIN>")
 IMAP_PORT: int = int(os.getenv("IMAP_PORT", "993"))
 IMAP_USER: str = os.getenv("IMAP_USER", "")
 IMAP_PASSWORD: str = os.getenv("IMAP_PASSWORD", "")
@@ -251,14 +251,14 @@ def test_update_file_link_pdf(db_path):
         import storage
         importlib.reload(storage)
         storage.append_invoice({"invoice_number": "001", "seller_tax_code": "TAX001"})
-        storage.update_file_link("001", "TAX001", pdf_link="https://rvc-s3.rvctel.vn/file.pdf")
+        storage.update_file_link("001", "TAX001", pdf_link="https://rvc-s3.<TARGET_DOMAIN>/file.pdf")
 
     conn = sqlite3.connect(db_path)
     row = conn.execute(
         "SELECT pdf_file_link FROM invoices WHERE invoice_number='001'"
     ).fetchone()
     conn.close()
-    assert row[0] == "https://rvc-s3.rvctel.vn/file.pdf"
+    assert row[0] == "https://rvc-s3.<TARGET_DOMAIN>/file.pdf"
 
 
 def test_update_file_link_xml(db_path):
@@ -266,14 +266,14 @@ def test_update_file_link_xml(db_path):
         import storage
         importlib.reload(storage)
         storage.append_invoice({"invoice_number": "002", "seller_tax_code": "TAX001"})
-        storage.update_file_link("002", "TAX001", xml_link="https://rvc-s3.rvctel.vn/file.xml")
+        storage.update_file_link("002", "TAX001", xml_link="https://rvc-s3.<TARGET_DOMAIN>/file.xml")
 
     conn = sqlite3.connect(db_path)
     row = conn.execute(
         "SELECT xml_file_link FROM invoices WHERE invoice_number='002'"
     ).fetchone()
     conn.close()
-    assert row[0] == "https://rvc-s3.rvctel.vn/file.xml"
+    assert row[0] == "https://rvc-s3.<TARGET_DOMAIN>/file.xml"
 
 
 def test_wal_mode_enabled(db_path):
@@ -471,7 +471,7 @@ def test_upload_file_returns_url():
 
     with patch("file_storage._get_client", return_value=mock_client), \
          patch("file_storage.MINIO_BUCKET", "rvc-invoices"), \
-         patch("file_storage.MINIO_PUBLIC_URL", "https://rvc-s3.rvctel.vn"):
+         patch("file_storage.MINIO_PUBLIC_URL", "https://rvc-s3.<TARGET_DOMAIN>"):
         import importlib
         import file_storage
         importlib.reload(file_storage)
@@ -479,7 +479,7 @@ def test_upload_file_returns_url():
             b"data", "0310674520_000123_20260429.pdf", "application/pdf"
         )
 
-    assert url == "https://rvc-s3.rvctel.vn/rvc-invoices/0310674520_000123_20260429.pdf"
+    assert url == "https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/0310674520_000123_20260429.pdf"
     mock_client.put_object.assert_called_once()
 
 
@@ -489,7 +489,7 @@ def test_upload_file_creates_bucket_when_missing():
 
     with patch("file_storage._get_client", return_value=mock_client), \
          patch("file_storage.MINIO_BUCKET", "rvc-invoices"), \
-         patch("file_storage.MINIO_PUBLIC_URL", "https://rvc-s3.rvctel.vn"):
+         patch("file_storage.MINIO_PUBLIC_URL", "https://rvc-s3.<TARGET_DOMAIN>"):
         import importlib
         import file_storage
         importlib.reload(file_storage)
@@ -826,7 +826,7 @@ def test_single_xml_attachment_xml_branch(tmp_path):
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
          patch("router.reporter.send_error_alert"), \
-         patch("router.file_storage.upload_file", return_value="https://rvc-s3.rvctel.vn/rvc-invoices/file.xml"), \
+         patch("router.file_storage.upload_file", return_value="https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.xml"), \
          patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
@@ -834,7 +834,7 @@ def test_single_xml_attachment_xml_branch(tmp_path):
     mock_parse.assert_called_once()
     stored = mock_store.call_args[0][0]
     assert stored["source_branch"] == "XML"
-    assert stored["xml_file_link"] == "https://rvc-s3.rvctel.vn/rvc-invoices/file.xml"
+    assert stored["xml_file_link"] == "https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.xml"
     assert stored["pdf_file_link"] == ""
 
 
@@ -851,7 +851,7 @@ def test_zip_with_xml_sets_zip_branch(tmp_path):
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
          patch("router.reporter.send_error_alert"), \
-         patch("router.file_storage.upload_file", return_value="https://rvc-s3.rvctel.vn/rvc-invoices/file.xml"), \
+         patch("router.file_storage.upload_file", return_value="https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.xml"), \
          patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
@@ -869,7 +869,7 @@ def test_pdf_only_attachment_pdf_branch(tmp_path):
          patch("router.storage.append_invoice") as mock_store, \
          patch("router.email_handler.mark_as_seen"), \
          patch("router.reporter.send_error_alert"), \
-         patch("router.file_storage.upload_file", return_value="https://rvc-s3.rvctel.vn/rvc-invoices/file.pdf"), \
+         patch("router.file_storage.upload_file", return_value="https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.pdf"), \
          patch("router.TEMP_DIR", str(tmp_path)):
         from router import process_email
         process_email(email)
@@ -877,7 +877,7 @@ def test_pdf_only_attachment_pdf_branch(tmp_path):
     mock_gemini.assert_called_once_with(b"%PDF-1.4")
     stored = mock_store.call_args[0][0]
     assert stored["source_branch"] == "PDF"
-    assert stored["pdf_file_link"] == "https://rvc-s3.rvctel.vn/rvc-invoices/file.pdf"
+    assert stored["pdf_file_link"] == "https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.pdf"
     assert stored["xml_file_link"] == ""
 
 
@@ -1496,8 +1496,8 @@ def db_with_data(tmp_path):
         "seller_name, issue_date, total_after_tax, pdf_file_link, xml_file_link, "
         "processed_date) VALUES (?,?,?,?,?,?,?,?,?)",
         ("001", "TAX001", "PURCHASE", "Công ty A", "2026-04-28", "11000000",
-         "https://rvc-s3.rvctel.vn/rvc-invoices/file.pdf",
-         "https://rvc-s3.rvctel.vn/rvc-invoices/file.xml",
+         "https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.pdf",
+         "https://rvc-s3.<TARGET_DOMAIN>/rvc-invoices/file.xml",
          "2026-04-28 10:00:00"),
     )
     conn.commit()
@@ -1539,7 +1539,7 @@ def test_index_shows_invoice_data(client):
 
 def test_index_file_links_rendered_as_anchor(client):
     resp = client.get("/?secret=testsecret")
-    assert b"rvc-s3.rvctel.vn" in resp.data
+    assert b"rvc-s3.<TARGET_DOMAIN>" in resp.data
     assert b"<a href=" in resp.data
 
 
@@ -1990,9 +1990,9 @@ networks:
 
 Replace the entire `.env.example` with:
 ```env
-IMAP_SERVER=mail.rvctel.vn
+IMAP_SERVER=mail.<TARGET_DOMAIN>
 IMAP_PORT=993
-IMAP_USER=invoices_bot@rvctel.vn
+IMAP_USER=invoices_bot@<TARGET_DOMAIN>
 IMAP_PASSWORD=your_imap_password_here
 
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -2012,17 +2012,17 @@ MINIO_SECRET_KEY=your_minio_secret_key
 MINIO_ROOT_USER=your_minio_access_key
 MINIO_ROOT_PASSWORD=your_minio_secret_key
 MINIO_BUCKET=rvc-invoices
-MINIO_PUBLIC_URL=https://rvc-s3.rvctel.vn
+MINIO_PUBLIC_URL=https://rvc-s3.<TARGET_DOMAIN>
 
 # Web UI
 WEB_PORT=8080
 WEB_SECRET=your_web_secret_token
 
 # Traefik / Domains
-ACME_EMAIL=admin@rvctel.vn
-DOMAIN_WEB=hddt.rvctel.vn
-DOMAIN_MINIO=rvc-s3.rvctel.vn
-DOMAIN_MINIO_CONSOLE=rvc-s3-console.rvctel.vn
+ACME_EMAIL=admin@<TARGET_DOMAIN>
+DOMAIN_WEB=hddt.<TARGET_DOMAIN>
+DOMAIN_MINIO=rvc-s3.<TARGET_DOMAIN>
+DOMAIN_MINIO_CONSOLE=rvc-s3-console.<TARGET_DOMAIN>
 ```
 
 - [ ] **Step 3: Run the full test suite to confirm nothing is broken**

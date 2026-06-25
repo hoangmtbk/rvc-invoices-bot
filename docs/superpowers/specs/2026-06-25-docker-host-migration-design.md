@@ -6,13 +6,13 @@ status: approved
 
 # rvc-invoices-bot — Docker Host Migration Design
 
-Move the entire `rvc-invoices-bot` stack from the current host to a new Docker host at `***REMOVED_IP***` using a maintenance window. All services and data must be preserved exactly.
+Move the entire `rvc-invoices-bot` stack from the current host to a new Docker host at `<TARGET_HOST_IP>` using a maintenance window. All services and data must be preserved exactly.
 
 ## Context
 
 - **Source host**: current machine (`/home/ai/rvc-invoices-bot/`)
-- **Target host**: `***REMOVED_IP***`, user `rvc-user`, SSH key `~/.ssh/id_rsa`
-- **Target project path**: `/home/rvc-user/rvc-invoices-bot/`
+- **Target host**: `<TARGET_HOST_IP>`, user `<TARGET_USER>`, SSH key `~/.ssh/id_rsa`
+- **Target project path**: `/home/<TARGET_USER>/rvc-invoices-bot/`
 - **Docker**: v29.4.2 + Compose v5.1.3 already installed on target
 - **Downtime**: maintenance window accepted; DNS + `docker compose down` already executed
 
@@ -29,11 +29,11 @@ Move the entire `rvc-invoices-bot` stack from the current host to a new Docker h
 
 | Domain | Service |
 |--------|---------|
-| `hddt.rvctel.vn` | web dashboard |
-| `rvc-s3.rvctel.vn` | MinIO S3 API |
-| `rvc-s3-console.rvctel.vn` | MinIO console UI |
+| `hddt.<TARGET_DOMAIN>` | web dashboard |
+| `rvc-s3.<TARGET_DOMAIN>` | MinIO S3 API |
+| `rvc-s3-console.<TARGET_DOMAIN>` | MinIO console UI |
 
-DNS A records already updated to `***REMOVED_IP***`.
+DNS A records already updated to `<TARGET_HOST_IP>`.
 
 ## Volumes to Migrate
 
@@ -50,7 +50,7 @@ Migration method: **Docker tar pipe over SSH** — no root required, no intermed
 docker run --rm \
   -v <VOLUME_NAME>:/data \
   alpine tar czf - /data \
-| ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
+| ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
   "docker volume create <VOLUME_NAME> && \
    docker run --rm -i -v <VOLUME_NAME>:/data alpine tar xzf - -C /"
 ```
@@ -65,7 +65,7 @@ rsync -avz \
   --exclude='data/' --exclude='logs/' --exclude='temp/' \
   -e "ssh -i ~/.ssh/id_rsa" \
   /home/ai/rvc-invoices-bot/ \
-  rvc-user@***REMOVED_IP***:/home/rvc-user/rvc-invoices-bot/
+  <TARGET_USER>@<TARGET_HOST_IP>:/home/<TARGET_USER>/rvc-invoices-bot/
 ```
 
 The `.env` file (live credentials) is included in the rsync. No separate copy step needed.
@@ -73,8 +73,8 @@ The `.env` file (live credentials) is included in the rsync. No separate copy st
 ## Build + Start on Target
 
 ```bash
-ssh -i ~/.ssh/id_rsa rvc-user@***REMOVED_IP*** \
-  "cd /home/rvc-user/rvc-invoices-bot && docker compose up --build -d"
+ssh -i ~/.ssh/id_rsa <TARGET_USER>@<TARGET_HOST_IP> \
+  "cd /home/<TARGET_USER>/rvc-invoices-bot && docker compose up --build -d"
 ```
 
 Images are built on the target from the transferred Dockerfiles. No image export/import needed.
@@ -98,7 +98,7 @@ Images are built on the target from the transferred Dockerfiles. No image export
 | 3 | Migrate 4 volumes via tar pipe over SSH | pending |
 | 4 | Build images + start containers on target | pending |
 | 5 | Verify all services on target | pending |
-| 6 | DNS cutover (A records → ***REMOVED_IP***) | **DONE** |
+| 6 | DNS cutover (A records → <TARGET_HOST_IP>) | **DONE** |
 | 7 | Monitor for 30 min; keep source volumes as backup | pending |
 
 ## Decommission
