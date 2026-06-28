@@ -43,7 +43,7 @@ class MisaScraper(BaseInvoiceScraper):
         # HTML-unescape URL to convert &amp; → & (common in email HTML bodies)
         nav_url = _html.unescape(self.url)
 
-        self.page.goto(nav_url, wait_until="networkidle", timeout=30_000)
+        self.page.goto(nav_url, wait_until="domcontentloaded", timeout=30_000)
         self._delay(2.0, 3.5)
 
         # sc= param auto-loads invoice — wait for result section
@@ -94,7 +94,7 @@ class MisaScraper(BaseInvoiceScraper):
     def _form_fill_flow(self) -> None:
         """Navigate to base form URL, enter code + captcha, submit, wait for result."""
         if _MISA_BASE not in self.page.url:
-            self.page.goto(_MISA_BASE, wait_until="networkidle")
+            self.page.goto(_MISA_BASE, wait_until="domcontentloaded")
             self._scroll()
 
         for attempt in range(_MAX_RETRIES):
@@ -113,7 +113,7 @@ class MisaScraper(BaseInvoiceScraper):
                 return
             if attempt < _MAX_RETRIES - 1:
                 logger.warning("MISA: no download buttons after attempt %d, reloading", attempt + 1)
-                self.page.reload(wait_until="networkidle")
+                self.page.reload(wait_until="domcontentloaded")
 
         raise CaptchaRequiredException(
             f"MISA: no results after {_MAX_RETRIES} attempts for '{self.lookup_code}'"
