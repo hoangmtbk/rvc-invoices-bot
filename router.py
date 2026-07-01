@@ -59,8 +59,10 @@ def _collect_pairs(uid_temp: str) -> list[dict]:
     return [{"stem": stem, **exts} for stem, exts in by_stem.items()]
 
 
-def _process_pair(pair: dict, email, had_zip: bool) -> None:
-    """Parse one file pair, upload to MinIO, append invoice to DB."""
+def _process_pair(pair: dict, email, had_zip: bool) -> bool:
+    """Parse one file pair, upload to MinIO, append invoice to DB.
+    Returns True if a parseable invoice was found and saved, False if the
+    pair held no parseable invoice (e.g. an HTML notification with no XML)."""
     subject = (email.subject or "") if email is not None else ""
     xml_bytes = pdf_bytes = None
 
@@ -89,7 +91,8 @@ def _process_pair(pair: dict, email, had_zip: bool) -> None:
         data = data_extractor.parse_pdf_via_gemini(pdf_bytes)
         branch = "PDF"
     else:
-        raise ValueError(f"No parseable file in pair: {pair.get('stem')}")
+        logger.info(f"No parseable invoice in pair: {pair.get('stem')}")
+        return False
 
     date_str = datetime.now().strftime("%Y%m%d")
     inv_num = str(data.get("invoice_number") or "unknown")
@@ -117,6 +120,7 @@ def _process_pair(pair: dict, email, had_zip: bool) -> None:
     data["source_email_subject"] = subject
     storage.append_invoice(data)
     logger.info(f"Invoice saved | branch={branch} | number={data.get('invoice_number')}")
+    return True
 
 
 def process_email(email) -> None:
@@ -131,12 +135,16 @@ def process_email(email) -> None:
             branch = "ATTACH"
             had_zip = _dump_and_extract(email, uid_temp)
             pairs = _collect_pairs(uid_temp)
-            if pairs:
-                for pair in pairs:
-                    _process_pair(pair, email, had_zip)
+            processed_any = False
+            for pair in pairs:
+                if _process_pair(pair, email, had_zip):
+                    processed_any = True
+            if processed_any:
                 return
 
-            logger.info(f"No invoice files in attachments — falling through to WEB | uid={email.uid}")
+            logger.info(
+                f"No parseable invoice in attachments — falling through to WEB | uid={email.uid}"
+            )
 
         branch = "WEB"
         logger.info(f"Branch WEB | uid={email.uid} | subject='{subject}'")
@@ -152,7 +160,8 @@ def process_email(email) -> None:
             pair["pdf"] = result.pdf_path
         if "xml" not in pair and "pdf" not in pair:
             raise ValueError("ScrapedResult has no file paths")
-        _process_pair(pair, email, had_zip=False)
+        if not _process_pair(pair, email, had_zip=False):
+            raise ValueError("Web-extracted files were not parseable")
 
     except Exception as e:
         logger.error(
