@@ -162,22 +162,49 @@ class CMCInvoiceScraper(BaseInvoiceScraper):
         self._delay(0.2, 0.5)
 
     def _inject_token(self, token: str) -> None:
-        """Inject the solved reCAPTCHA token and trigger the React onChange callback."""
-        self.page.evaluate(
+        """Inject the solved reCAPTCHA token and trigger the widget's success
+        callback so the React form enables its submit button.
+
+        The callback lives at a minified path under ___grecaptcha_cfg.clients
+        that changes between reCAPTCHA builds (observed clients[0].T.T.callback,
+        later clients[0].D.D.callback). Hardcoding it breaks silently — the token
+        is set but the button stays disabled. Instead we scan the clients tree
+        for any 1-arg function keyed exactly 'callback' and invoke it.
+        """
+        invoked = self.page.evaluate(
             """(token) => {
                 const ta = document.getElementById('g-recaptcha-response');
                 if (ta) { ta.value = token; }
-                try {
-                    const cfg = window.___grecaptcha_cfg;
-                    if (cfg && cfg.clients && cfg.clients[0] &&
-                            cfg.clients[0].T && cfg.clients[0].T.T) {
-                        const cb = cfg.clients[0].T.T.callback;
-                        if (typeof cb === 'function') { cb(token); }
+                const cfg = window.___grecaptcha_cfg;
+                if (!cfg || !cfg.clients) return false;
+                const found = [];
+                function scan(obj, depth) {
+                    if (depth > 6 || !obj || typeof obj !== 'object') return;
+                    for (const k of Object.keys(obj)) {
+                        let v;
+                        try { v = obj[k]; } catch (e) { continue; }
+                        if (typeof v === 'function') {
+                            // 'callback' = success (arity 1); skip expired-/error-callback
+                            if (k === 'callback' && v.length === 1) found.push(v);
+                        } else if (v && typeof v === 'object') {
+                            scan(v, depth + 1);
+                        }
                     }
-                } catch (e) {}
+                }
+                Object.keys(cfg.clients).forEach(ci => scan(cfg.clients[ci], 0));
+                let ok = false;
+                for (const fn of found) {
+                    try { fn(token); ok = true; } catch (e) {}
+                }
+                return ok;
             }""",
             token,
         )
+        if not invoked:
+            logger.warning(
+                "CMCInvoice: no reCAPTCHA 'callback' function found under "
+                "___grecaptcha_cfg.clients — submit may stay disabled"
+            )
 
     def _download_btn(self, selector: str) -> bytes | None:
         btn = self.page.locator(selector).first

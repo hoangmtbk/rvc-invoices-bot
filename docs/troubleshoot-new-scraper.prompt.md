@@ -334,36 +334,57 @@ result = page.evaluate("""() => {
 # Look for: FUNC clients[0].T.T.callback len=1
 ```
 
-> **Note:** The path letters (`T`, `T`) are minified and may differ across sites/versions, but the pattern is a 1-argument function named `callback` near the sitekey. Verify before hardcoding.
+> **Note:** The path letters (`T`, `T`) are minified and **change between reCAPTCHA builds** (later seen as `D.D`). Do not hardcode them — scan for the 1-arg `callback` function dynamically (see Step 3).
 
-### Step 3 — Inject token via the callback
+### Step 3 — Inject token via the callback (scan, don't hardcode the path)
+
+**Do NOT hardcode the minified path** (`clients[0].T.T.callback`). It changes between
+reCAPTCHA builds — observed `T.T` on one build, `D.D` on a later one (CMC, uid=2131).
+A hardcoded path fails silently: the token is set but the button stays disabled.
+Scan the clients tree for any 1-arg function keyed exactly `callback` and invoke it:
 
 ```python
 def _inject_token(self, token: str) -> None:
-    self.page.evaluate(
+    invoked = self.page.evaluate(
         """(token) => {
-            // 1. Set hidden textarea (belt-and-suspenders)
             const ta = document.getElementById('g-recaptcha-response');
             if (ta) { ta.value = token; }
-            // 2. Call the reCAPTCHA success callback to trigger React onChange
-            try {
-                const cfg = window.___grecaptcha_cfg;
-                if (cfg && cfg.clients && cfg.clients[0] &&
-                        cfg.clients[0].T && cfg.clients[0].T.T) {
-                    const cb = cfg.clients[0].T.T.callback;
-                    if (typeof cb === 'function') { cb(token); }
+            const cfg = window.___grecaptcha_cfg;
+            if (!cfg || !cfg.clients) return false;
+            const found = [];
+            function scan(obj, depth) {
+                if (depth > 6 || !obj || typeof obj !== 'object') return;
+                for (const k of Object.keys(obj)) {
+                    let v;
+                    try { v = obj[k]; } catch (e) { continue; }
+                    if (typeof v === 'function') {
+                        // 'callback' = success (arity 1); skip expired-/error-callback
+                        if (k === 'callback' && v.length === 1) found.push(v);
+                    } else if (v && typeof v === 'object') {
+                        scan(v, depth + 1);
+                    }
                 }
-            } catch (e) {}
+            }
+            Object.keys(cfg.clients).forEach(ci => scan(cfg.clients[ci], 0));
+            let ok = false;
+            for (const fn of found) { try { fn(token); ok = true; } catch (e) {} }
+            return ok;
         }""",
         token,
     )
+    if not invoked:
+        logger.warning("no reCAPTCHA 'callback' found under ___grecaptcha_cfg.clients")
 ```
 
 After injection, verify the submit button is **no longer disabled**:
 ```python
 disabled = page.locator("button:has-text('Tra cứu hóa đơn')").first.evaluate("e => e.disabled")
-assert not disabled, "submit still disabled — callback path wrong"
+assert not disabled, "submit still disabled — no callback fired (token or scan wrong)"
 ```
+
+To find the path manually when debugging, use `scripts/debug_cmcinvoice_cb2.py <code>` — it
+solves the captcha, dumps every function under `___grecaptcha_cfg.clients`, and reports which
+1-arg `callback` candidate enables the submit button.
 
 ### Step 4 — Scraper structure for reCAPTCHA v2
 
@@ -684,6 +705,8 @@ INFO | e2e_direct | SUCCESS — invoice saved to database
 | **Slow server — result-wait timeout too short (VNPT)** | Submit succeeds but the results page takes ~60s to render (server-side, not client). A 15s `wait_for_selector` times out, the scraper wrongly concludes "captcha failed", then touches the page **while the POST navigation is still in flight** → `Page.evaluate: Execution context was destroyed, most likely because of a navigation` | Wait generously for the result row (VNPT: `_RESULT_TIMEOUT_MS = 90_000`). Measure the real server time first (open the portal in a browser and watch how long the results take). Give the throwaway bypass probe its own **short** timeout so it still fails fast. |
 | **Retry on a navigated page fails (VNPT)** | After the first submit (or the bypass probe) the page navigates to the results URL (`/HomeNoLogin/SearchByFkey`). Its form/captcha state is stale: the captcha `<img>` is gone (solver returns `''`) and re-submitting from there never yields results. In-place captcha refresh (`img.src = base + '?t=' + Date.now()`) does **not** fix this. | **Reload a fresh form at the top of every attempt** (`page.goto(url)` + wait for the code input) — a full page load is the only reliable reset. Same principle as the reCAPTCHA-v2 "re-navigate each attempt" rule. Drop the in-place captcha-refresh helper. |
 | Bypass probe corrupts subsequent attempts | `_probe_bypass()` submits a dummy `0000` captcha to detect absent server-side validation; that submit navigates the page away, breaking the real attempts that follow | Keep the probe but ensure the retry loop reloads a clean form before each attempt (see above). The probe result is almost always `False` for VNPT — it never bypasses. |
+| **reCAPTCHA callback path changed — submit stays disabled (CMC)** | Capsolver returns a valid token (`len≈2400+`), but `submit still disabled after token inject`. The hardcoded callback path `clients[0].T.T.callback` no longer exists — the minified path changed to `clients[0].D.D.callback` on a newer build. Setting `g-recaptcha-response` alone doesn't fire React's onChange, so the button never enables. | **Never hardcode the minified path.** Scan `___grecaptcha_cfg.clients` for any 1-arg function keyed exactly `callback` and invoke it (see Phase 4b Step 3). Debug with `scripts/debug_cmcinvoice_cb2.py <code>`. |
+| Capsolver transient `ERROR_CAPTCHA_SOLVE_FAILED` (1001) | One attempt returns `status='failed'` with no token; happens intermittently on reCAPTCHA v2 | Non-fatal — the retry loop (`_MAX_RETRIES = 3`) recovers on the next attempt. Don't treat a single Capsolver failure as a scraper bug. |
 
 ### VNPT scraper — full working flow (debugged via uid=2082, Jul 2026)
 
@@ -703,6 +726,23 @@ INFO | e2e_direct | SUCCESS — invoice saved to database
 >     python /app/scripts/debug_vnpt.py <code>
 > ```
 > Note: `docker compose run` uses the **baked image** — mount `-v "$PWD/scrapers:/app/scrapers"` (and `/app/scripts`) to test edits without rebuilding.
+
+### CMC Invoice scraper — full working flow (debugged via uid=2131, Jul 2026)
+
+`scrapers/cmcinvoice.py` — CMC Telecom React SPA at `cinvoice.cmctelecom.vn`, reCAPTCHA v2.
+Lookup code format is `CTEL.<hex>` (dot prefix — extracted via `_extract_code_from_table`, not `REGEX_PATTERNS`).
+
+1. Retry loop (`_MAX_RETRIES = 3`), re-navigating each attempt (`goto(_BASE_URL, wait_until="networkidle")`).
+2. Fill `#invoiceCode`; submit `button:has-text('Tra cứu hóa đơn')` starts **disabled**.
+3. Solve reCAPTCHA v2 via Capsolver `ReCaptchaV2TaskProxyLess` (sitekey `6LfXVNQrAAAAAHnUNhAoJlx7W7p8HP7pxX8NSTqt`). ~10–65s; a single `ERROR_CAPTCHA_SOLVE_FAILED` is retried.
+4. `_inject_token()` — set `#g-recaptcha-response`, then **scan** `___grecaptcha_cfg.clients` for the 1-arg `callback` and call it (path is minified and drifts: `T.T` → `D.D`). Verify the submit button is no longer disabled.
+5. Click submit → Radix dialog (`[id^=radix][role=dialog]`) opens with `Tải XML` / `Tải PDF` buttons → `expect_download()` each.
+
+> Debug scripts: `scripts/debug_cmcinvoice_cb2.py <code>` finds the live callback path; run with source mounted:
+> ```bash
+> docker compose run --rm -v "$PWD/scrapers:/app/scrapers" -v "$PWD/scripts:/app/scripts" \
+>     rvc-invoices-bot python /app/scripts/debug_cmcinvoice_cb2.py <code>
+> ```
 
 ### Lookup code not captured by `REGEX_PATTERNS` — use table scan
 
