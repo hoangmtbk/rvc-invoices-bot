@@ -681,6 +681,28 @@ INFO | e2e_direct | SUCCESS — invoice saved to database
 | `router._process_pair` crashes with `email=None` | `AttributeError: 'NoneType' has no attribute 'subject'` when called from `e2e_direct.py` | Guard with `subject = (email.subject or "") if email is not None else ""` |
 | Lookup code uses a non-alphanumeric prefix (e.g. `CTEL.…`) | `REGEX_PATTERNS` patterns only capture `[A-Z0-9_]+` — the dot separator causes mismatch; `fetch_email_uid.py` returns `code = None` | Use `_extract_code_from_table()` (table-aware BeautifulSoup scan) instead of adding a custom regex. The code is always the sibling `<td>` of the "Mã tra cứu" label cell. See below. |
 | `_extract_code_from_table` returns wrong cell (layout wrapper) | The function picks up the text of a sibling layout cell (e.g. QR caption or "Mẫu số:") instead of the actual code | Use `recursive=False` on `find_all("td")` **and** skip any cell that itself contains a nested `<td>` (`if td.find("td"): continue`). This ensures only leaf cells match. |
+| **Slow server — result-wait timeout too short (VNPT)** | Submit succeeds but the results page takes ~60s to render (server-side, not client). A 15s `wait_for_selector` times out, the scraper wrongly concludes "captcha failed", then touches the page **while the POST navigation is still in flight** → `Page.evaluate: Execution context was destroyed, most likely because of a navigation` | Wait generously for the result row (VNPT: `_RESULT_TIMEOUT_MS = 90_000`). Measure the real server time first (open the portal in a browser and watch how long the results take). Give the throwaway bypass probe its own **short** timeout so it still fails fast. |
+| **Retry on a navigated page fails (VNPT)** | After the first submit (or the bypass probe) the page navigates to the results URL (`/HomeNoLogin/SearchByFkey`). Its form/captcha state is stale: the captcha `<img>` is gone (solver returns `''`) and re-submitting from there never yields results. In-place captcha refresh (`img.src = base + '?t=' + Date.now()`) does **not** fix this. | **Reload a fresh form at the top of every attempt** (`page.goto(url)` + wait for the code input) — a full page load is the only reliable reset. Same principle as the reCAPTCHA-v2 "re-navigate each attempt" rule. Drop the in-place captcha-refresh helper. |
+| Bypass probe corrupts subsequent attempts | `_probe_bypass()` submits a dummy `0000` captcha to detect absent server-side validation; that submit navigates the page away, breaking the real attempts that follow | Keep the probe but ensure the retry loop reloads a clean form before each attempt (see above). The probe result is almost always `False` for VNPT — it never bypasses. |
+
+### VNPT scraper — full working flow (debugged via uid=2082, Jul 2026)
+
+`scrapers/vnpt.py` reference flow, confirmed against `vttphcm-tt78.vnpt-invoice.com.vn`:
+
+1. `_load_fresh_form()` → `page.goto(url, wait_until="domcontentloaded")` + wait for `input#strFkey`.
+2. `_probe_bypass()` — dummy `0000` submit with a **short** timeout (`_PROBE_TIMEOUT_MS = 12_000`). Returns `False` here (captcha is enforced).
+3. Retry loop (`_MAX_CAPTCHA_RETRIES = 3`), **reloading a fresh form each attempt**:
+   - fill code → screenshot `#text img` → Capsolver → `_enter_captcha` into `#text #captch`.
+   - submit `button:has-text("Tìm kiếm")` with `no_wait_after=True`, then `wait_for_selector(result_row | validation_error, timeout=90_000)`. The server can take ~60s.
+   - a wrong captcha simply re-renders without a result row → the 90s wait expires → reload and retry (a correct captcha on attempt 2/3 succeeds).
+4. Results land in a `table.table-main` (headers `STT · Tên hóa đơn · Mẫu số · … · Tải file · … · Tải biên bản`). Download: XML via `Xem` → same-page modal → `Tải hóa đơn Zip` → unzip; PDF via the `/downloadPDF?...` href.
+
+> Debug script: `scripts/debug_vnpt.py <code> [url]` — submits once and dumps post-submit URL, tables, validation nodes, and screenshots to `/tmp/vnpt_debug/`. Run it with the source mounted so it picks up local edits:
+> ```bash
+> docker compose run --rm -v "$PWD/scrapers:/app/scrapers" rvc-invoices-bot \
+>     python /app/scripts/debug_vnpt.py <code>
+> ```
+> Note: `docker compose run` uses the **baked image** — mount `-v "$PWD/scrapers:/app/scrapers"` (and `/app/scripts`) to test edits without rebuilding.
 
 ### Lookup code not captured by `REGEX_PATTERNS` — use table scan
 

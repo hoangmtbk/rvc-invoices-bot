@@ -29,6 +29,15 @@ _CAPTCHA_VAL_ERROR_SEL = (
 
 _MAX_CAPTCHA_RETRIES = 3
 
+# The portal POSTs the form and returns a full results page; the server can be
+# slow — observed up to ~60s before the results page renders. Wait generously so
+# we don't give up mid-navigation (which also triggers "Execution context was
+# destroyed" if we then touch the page).
+_RESULT_TIMEOUT_MS = 90_000
+# The bypass probe submits a dummy captcha that will never succeed, so it should
+# fail fast instead of blocking for the full result timeout.
+_PROBE_TIMEOUT_MS = 12_000
+
 # Column header for PDF download in the result table
 _COL_TAI_FILE = "Tải File"
 
@@ -50,9 +59,7 @@ _DOWNLOAD_ZIP_SEL = (
 class VnptScraper(BaseInvoiceScraper):
     def scrape(self) -> ScrapedResult:
         self._setup_dialogs()
-        self.page.goto(self.url, wait_until="domcontentloaded")
-        # Wait for the lookup code input to be visible before interacting
-        self.page.locator(_CODE_SEL).first.wait_for(state="visible", timeout=30_000)
+        self._load_fresh_form()
         self._scroll()
 
         if self._probe_bypass():
@@ -66,14 +73,17 @@ class VnptScraper(BaseInvoiceScraper):
             return ScrapedResult(xml_bytes=xml_bytes, pdf_bytes=pdf_bytes)
 
         for attempt in range(_MAX_CAPTCHA_RETRIES):
+            # Each submit (and the bypass probe above) navigates the page to the
+            # results URL, whose captcha/form is stale. Reload a clean form before
+            # every attempt — a fresh page load is the only reliable reset.
+            self._load_fresh_form()
+
             self._fill_lookup_code()
             solution = self._screenshot_and_solve_captcha()
             if not solution or not re.fullmatch(r"[0-9]{4}", solution):
                 logger.warning(
-                    "VNPT: solver returned invalid solution '%s', refreshing captcha", solution
+                    "VNPT: solver returned invalid solution '%s', retrying", solution
                 )
-                if attempt < _MAX_CAPTCHA_RETRIES - 1:
-                    self._refresh_captcha_image()
                 continue
             logger.info("VNPT attempt %d/%d: captcha='%s'", attempt + 1, _MAX_CAPTCHA_RETRIES, solution)
             self._enter_captcha(solution)
@@ -81,11 +91,9 @@ class VnptScraper(BaseInvoiceScraper):
             if self._submit_and_wait_for_results():
                 break
 
-            if attempt < _MAX_CAPTCHA_RETRIES - 1:
-                logger.warning(
-                    "VNPT: results table absent after attempt %d, refreshing captcha", attempt + 1
-                )
-                self._refresh_captcha_image()
+            logger.warning(
+                "VNPT: results table absent after attempt %d, retrying", attempt + 1
+            )
         else:
             raise CaptchaRequiredException(
                 f"VNPT: captcha failed after {_MAX_CAPTCHA_RETRIES} attempts"
@@ -104,6 +112,12 @@ class VnptScraper(BaseInvoiceScraper):
 
     # ── form interaction ────────────────────────────────────────────────────
 
+    def _load_fresh_form(self) -> None:
+        """Navigate to the portal and wait for the lookup-code input.
+        A fresh load resets any stale captcha/form state left by a prior submit."""
+        self.page.goto(self.url, wait_until="domcontentloaded")
+        self.page.locator(_CODE_SEL).first.wait_for(state="visible", timeout=30_000)
+
     def _fill_lookup_code(self) -> None:
         el = self.page.locator(_CODE_SEL).first
         el.wait_for(state="visible", timeout=10_000)
@@ -117,7 +131,7 @@ class VnptScraper(BaseInvoiceScraper):
         try:
             self._fill_lookup_code()
             self._enter_captcha("0000")
-            result = self._submit_and_wait_for_results()
+            result = self._submit_and_wait_for_results(_PROBE_TIMEOUT_MS)
             logger.info("VNPT: bypass probe result=%s", result)
             return result
         except Exception as exc:
@@ -137,7 +151,7 @@ class VnptScraper(BaseInvoiceScraper):
         el.press_sequentially(solution, delay=random.randint(80, 150))
         self._delay(0.2, 0.5)
 
-    def _submit_and_wait_for_results(self) -> bool:
+    def _submit_and_wait_for_results(self, timeout_ms: int = _RESULT_TIMEOUT_MS) -> bool:
         btn = self.page.locator(_SUBMIT_BTN).first
         btn.wait_for(state="visible", timeout=10_000)
         btn.hover()
@@ -148,10 +162,11 @@ class VnptScraper(BaseInvoiceScraper):
         try:
             # Fastest signal of success: result row.
             # Fastest signal of wrong captcha: jQuery injects span.field-validation-error.
+            # The results page can take ~60s to render, so wait up to timeout_ms.
             self.page.wait_for_selector(
                 f"{_RESULT_ROW}, {_CAPTCHA_VAL_ERROR_SEL}, .text-danger:not(:empty)",
                 state="visible",
-                timeout=15_000,
+                timeout=timeout_ms,
             )
         except Exception:
             return False
@@ -162,25 +177,6 @@ class VnptScraper(BaseInvoiceScraper):
             )
             return False
         return self.page.locator(_RESULT_ROW).count() > 0
-
-    def _refresh_captcha_image(self) -> None:
-        """
-        Force a new captcha by changing src with a timestamp query param.
-        Clicking a bare <img> does nothing — the browser must re-request the URL.
-        """
-        self.page.evaluate(
-            """() => {
-                const img = document.querySelector('#text img');
-                if (!img) return;
-                const base = img.src.split('?')[0];
-                img.src = base + '?t=' + Date.now();
-            }"""
-        )
-        # Wait for the new captcha image download to complete
-        try:
-            self.page.wait_for_load_state("domcontentloaded", timeout=5_000)
-        except Exception:
-            self._delay(1.0, 1.5)
 
     # ── result validation ───────────────────────────────────────────────────
 
