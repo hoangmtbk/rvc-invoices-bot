@@ -7,6 +7,9 @@ from config import IMAP_PASSWORD, IMAP_PORT, IMAP_SERVER, IMAP_USER
 logger = logging.getLogger(__name__)
 
 SUBJECT_KEYWORDS = ["hóa đơn điện tử", "hóa đơn", "hddt", "hdđt", "thông báo phát hành"]
+# Subjects to skip even if they match a keyword above (not fetchable invoices).
+# "điều chỉnh hóa đơn" = invoice adjustment notice, not a new invoice.
+SUBJECT_EXCLUDE = ["điều chỉnh hóa đơn"]
 
 
 def fetch_unseen_emails() -> list:
@@ -17,9 +20,13 @@ def fetch_unseen_emails() -> list:
         ) as mailbox:
             for msg in mailbox.fetch(AND(seen=False), mark_seen=False):
                 subject_lower = (msg.subject or "").lower()
-                if any(kw in subject_lower for kw in SUBJECT_KEYWORDS):
-                    emails.append(msg)
-                    logger.info(f"Matched email: uid={msg.uid} subject='{msg.subject}'")
+                if not any(kw in subject_lower for kw in SUBJECT_KEYWORDS):
+                    continue
+                if any(ex in subject_lower for ex in SUBJECT_EXCLUDE):
+                    logger.info(f"Skipped (excluded subject): uid={msg.uid} subject='{msg.subject}'")
+                    continue
+                emails.append(msg)
+                logger.info(f"Matched email: uid={msg.uid} subject='{msg.subject}'")
     except Exception as e:
         logger.error(f"IMAP fetch failed: {e}")
         raise
